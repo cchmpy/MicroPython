@@ -1,0 +1,96 @@
+3.2 (二) 安装WSL的步骤
+    (1) dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+    (2) dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+    (4) wsl --set-default-version 2
+    
+    (四）卸载wsl
+    (1) wsl --unregister Ubuntu
+
+3.3 配置编译环境命令
+	sudo apt update
+	sudo apt install build-essential gcc-mingw-w64 cmake 
+
+3.4 (一) 克隆软件包
+        cd
+        git clone https://gitee.com/EspressifSystems/esp-gitee-tools.git  
+        git clone https://gitee.com/EspressifSystems/esp-idf.git
+    (二) 安装辅助环境和库
+        python3 --version
+        sudo apt install python3.12-venv
+        sudo apt-get install libusb-1.0
+
+    (三) 切换到特定的ESP-IDF标签（版本）、更新子模块、安装ESP-IDF工具链
+        cd ~/esp-idf
+        git checkout v5.4.2
+        cd ~/esp-gitee-tools
+        ./submodule-update.sh ~/esp-idf/ 
+        ./install.sh ~/esp-idf/
+     
+    (四) 设置环境变量
+        source ~/esp-idf/export.sh
+
+3.5 下载MicroPython源代码
+        tar xvJf micropython-1.28.0.tar.xz
+
+3.6 (一) 编译生成mpy-cross
+        cd ~/micropython-1.28.0
+        make -C mpy-cross
+
+    (二) 关于交叉编译器
+        cd ~/micropython-1.28.0/mpy-cross/build
+        ./mpy-cross main.py -march=xtensawin
+        
+    (三) mpy-cross的用法
+        ./mpy-cross --help
+        ./mpy-cross 1.py -march=xtensawin -X emit=bytecode 
+        ./mpy-cross 2.py -march=xtensawin -X emit=native
+        ./mpy-cross 3.py -march=xtensawin -X emit=viper
+
+    (五) Windows系统下使用mpy-cross
+        pip install mpy-cross
+        mpy-cross --version
+        mpy-cross --help
+        pip install --upgrade mpy-cross
+        mpy-cross 1.py -march=xtensawin -X emit=bytecode
+        
+3.7 编译自定义固件
+    3.7.1 编译默认固件
+        cd ~/micropython-1.28.0/ports/esp32
+        make
+        
+    3.7.2 开发板和开发板变体
+        make BOARD=ESP32_GENERIC_S3
+        make BOARD=ESP32_GENERIC BOARD_VARIANT=SPIRAM
+	
+	3.7.3 修改和查看分区表
+		(三)  验证分区表文件（csv）的正确性
+		cd ~/micropython-1.28.0/ports/esp32
+		python ~/esp-idf/components/partition_table/gen_esp32part.py partitions-16MiB-custom.csv custom.bin
+		python ~/esp-idf/components/partition_table/gen_esp32part.py custom.bin
+	
+		(四) 查看固件文件（firmware.bin）使用的分区表信息	
+		pip install mp-image-tool-esp32
+		mp-image-tool-esp32 build-ESP32_CUSTOM/firmware.bin
+		
+    3.7.5 为固件添加python模块
+    (一)添加第三方模块
+        cd
+        git clone https://github.com/miguelgrinberg/microdot.git        
+        cd ~/microdot
+        git pull
+
+    3.7.7 为固件添加C模块
+        cd
+        git clone https://github.com/v923z/micropython-ulab.git         
+        cd ~/micropython-ulab
+        git pull
+        cd ~/micropython-1.28.0/ports/esp32/
+        make BOARD=ESP32_CUSTOM USER_C_MODULES=~/micropython-ulab/code/micropython.cmake 
+		make BOARD=ESP32_CUSTOM USER_C_MODULES=~/micropython.cmake
+    
+    3.7.8 设置启动Ubuntu后自动执行的命令
+        source ~/esp-idf/export.sh
+        cd ~/micropython-1.28.0/ports/esp32
+
+
+
