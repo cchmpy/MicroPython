@@ -16,4 +16,6 @@ timer = Timer(0,mode=Timer.PERIODIC,period=1000,callback=handle)  # 定义并启
 try:
     while True: time.sleep(1)
 except KeyboardInterrupt: 
-    motor.deinit(); encoder.deinit()
+    timer.deinit()
+    motor.deinit()
+    encoder.deinit()
