@@ -1,0 +1,27 @@
+{
+    "deploy": [
+        "../deploy.md"
+    ],
+    "deploy_options": {
+        "flash_offset": "0x1000"
+    },
+    "docs": "",
+    "features": [
+        "BLE",
+        "External Flash",
+        "WiFi"
+    ],
+    "images": [
+        "esp32_devkitc.jpg"
+    ],
+    "mcu": "esp32",
+    "product": "ESP32 / WROOM",
+    "thumbnail": "",
+    "url": "https://www.espressif.com/en/products/modules",
+    "variants": {
+        "SPIRAM_OTA": "Support for SPIRAM / WROVER and OTA",
+        "SPIRAM": "Support for SPIRAM / WROVER",       
+        "OTA": "Support for OTA"
+    },
+    "vendor": "Espressif"
+}
