@@ -10,7 +10,7 @@ Centered on the ESP32 hardware platform, this book systematically covers the com
 | --- | --- |
 | Chapter 1 Setting Up the Development Environment for MicroPython | 12 |
 | Chapter 2 Self-Built Firmware | 14 |
-| Chapter 3 The MicroPython Language | 56 |
+| Chapter 3 The MicroPython Syntax | 56 |
 | Chapter 4 Data Structures and Data Processing | 30 |
 | Chapter 5 Systems and Platforms | 30 |
 | Chapter 6 Controlling On-Chip Peripherals | 53 |
