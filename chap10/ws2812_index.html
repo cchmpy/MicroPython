@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 WS2812B 控制器</title>
+    <style>
+        * {box-sizing: border-box; font-family: Arial; margin: 10px;}
+        .container {max-width: 400px; margin: 20px auto; padding: 20px; border: 1px solid #ccc;}
+        .color-block {width: 100%; height: 40px; border-radius: 8px; border: 2px solid #333;}
+        #previewColor {background: rgb(0,0,0);}
+        #currentColor {background: rgb(0,0,0);}
+        input[type="range"] {width: 80%;}
+        button {padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; font-size: 16px;}
+        .label {font-weight: bold;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h3>WS2812B智能灯控制</h3>
+        <p class="label">实时预览颜色</p>
+        <div id="previewColor" class="color-block"></div>
+        <p class="label">灯当前实际颜色</p>
+        <div id="currentColor" class="color-block"></div>
+
+        <p class="label">红 (R): <span id="r_val">0</span></p>
+        <input type="range" id="r" min="0" max="255" value="0">
+        <p class="label">绿 (G): <span id="g_val">0</span></p>
+        <input type="range" id="g" min="0" max="255" value="0">
+        <p class="label">蓝 (B): <span id="b_val">0</span></p>
+        <input type="range" id="b" min="0" max="255" value="0">
+
+        <br><button onclick="sendRGB()">发送颜色到灯</button>
+    </div>
+
+    <script>        
+		const rSlider = document.getElementById('r');
+		const gSlider = document.getElementById('g');
+		const bSlider = document.getElementById('b');
+		const previewColor = document.getElementById('previewColor');
+		const currentColor = document.getElementById('currentColor');
+		const rVal = document.getElementById('r_val');
+		const gVal = document.getElementById('g_val');
+		const bVal = document.getElementById('b_val');
+
+		// WebSocket连接
+		console.log("尝试连接 WebSocket...");
+		const ws = new WebSocket(`ws://${window.location.host}`);
+		
+		// 实时预览颜色值
+		function updatePreview() {
+			let r = rSlider.value;
+			let g = gSlider.value;
+			let b = bSlider.value;
+			previewColor.style.background = `rgb(${r},${g},${b})`;
+			rVal.textContent = r;
+			gVal.textContent = g;
+			bVal.textContent = b;
+		}
+
+		// ==================== 发送消息 ====================
+		window.sendRGB = function() {
+			if (ws.readyState === WebSocket.OPEN) {
+				const data = {
+					r: parseInt(rSlider.value),
+					g: parseInt(gSlider.value),
+					b: parseInt(bSlider.value)
+				};
+				//  发送JSON数据
+				ws.send(JSON.stringify(data));
+				console.log("已发送：", data);
+			}
+		};
+
+		// ==================== 接收消息（自动适配带\n的数据） ====================
+		ws.onmessage = function(evt) {
+			// 自动去除换行符，解析JSON
+			const jsonStr = evt.data.trim();
+			if (!jsonStr) return;
+			const data = JSON.parse(jsonStr);
+			currentColor.style.background = `rgb(${data.r},${data.g},${data.b})`;
+		};
+
+		ws.onopen = () => console.log("WebSocket连接成功");
+		ws.onerror = (e) => console.error("连接错误", e);		
+		window.onbeforeunload = function() {ws.close(); };  // 监听窗口关闭事件
+		
+		rSlider.addEventListener('input', updatePreview);  // 绑定事件回调
+		gSlider.addEventListener('input', updatePreview);
+		bSlider.addEventListener('input', updatePreview);
+		updatePreview();        
+    </script>
+</body>
+</html>
+
+

@@ -1,34 +1,30 @@
-class RAMBlockDev:                                      # 定义支持块协议的RAMBlockDev类
-    def __init__(self, block_size, num_blocks):
-        self.block_size = block_size                    # 块大小
-        self.data = bytearray(block_size * num_blocks)  # 分配内存，作为保存数据的设备
-   
-    def readblocks(self, block_num, buf, offset=0):
-        addr = block_num * self.block_size + offset
-        for i in range(len(buf)):
-            buf[i] = self.data[addr + i] 
-   
-    def writeblocks(self, block_num, buf, offset=0):
-        # 内存设备无需擦除，直接更改
-        addr = block_num * self.block_size + offset
-        for i in range(len(buf)):
-            self.data[addr + i] = buf[i]
+from machine import TouchPad,Pin
+import time,sys
+s3 = 'ESP32S3' in sys.implementation._machine # 是否为ESP32-S3
+t = TouchPad(12)                              # 触摸对象
+led = Pin(23,mode=Pin.OUT,value=0)            # LED灯
+baseline = 0                                  # 基线值
+sensitivity = 0.3                             # 灵敏度因子，越小越敏感，可根据实验调整
+noise_threshold = 1000 if s3 else 10          # 噪声阈值，小于此值的变化忽略不计
 
-    def ioctl(self, op, arg):
-        if op == 4:                                     # 获取块数量
-            return len(self.data) // self.block_size
-        if op == 5:                                     # 获取块大小
-            return self.block_size 
-        if op == 6:                                     # 块擦除,因无需擦除，所以是空操作
-            return 0
-if __name__== '__main__':
-    import vfs
-    ram_bdev = RAMBlockDev(512, 50)                     # 定义基于内存的块设备
-    # vfs.VfsFat.mkfs(ram_bdev)                        # 使用Fat文件系统格式化块设备
-    vfs.VfsLfs2.mkfs(ram_bdev)                          # 使用Littlefs V2文件系统格式化块设备
-    vfs.mount(bdev, '/ramdisk')                         # 挂载块设备到目录/ramdisk    
-   
-    with open('/ramdisk/1.txt', 'w+') as f:             # 文件操作
-        f.write('Hello world')
-        f.seek(0)
-        print(f.read())
+print("校准中,请勿触摸...")                     # 开始进行校准基线
+time.sleep(1)
+cnt = 100
+for i in range(cnt):
+    baseline += t.read()
+    time.sleep(0.01)
+baseline //= cnt                              # 计算滚动平均值作为基线
+print("校准完成,基线值:", baseline)
+
+while True:
+    value = t.read()
+    change = abs(baseline - value)            # 计算测量值与基线的差值
+    per  = change/baseline                    # 变化百分比
+    if change>noise_threshold and per>sensitivity: # 变化值超过噪声阈值和灵敏度要求
+        print(f"检测到触摸，测量值:{value} 变化:{per:0.1%}")
+        led.toggle()                          # 切换LED开关状态或进行其它操作
+        time.sleep_ms(500)                    # 有触摸时，简单延时去抖
+    else:
+        # 无触摸时，缓慢更新基线以适应环境变化（温漂）
+        baseline = baseline*0.99+value*0.01   # 一阶低通滤波
+    time.sleep_ms(50)                         # 无触摸时短延时

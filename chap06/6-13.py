@@ -1,33 +1,38 @@
-from uctypes import UINT8, UINT16, ARRAY, struct, addressof
-data = bytearray(b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f')
-addr = addressof(data)
+from machine import Timer,I2C,Signal,Pin
+import time,bmp280,buzzer                         # 引入程序6-8.py、6-5.py
+bz  = buzzer.Buzzer(19)                           # 蜂鸣器
+bmp = bmp280.BMP280_I2C(I2C(0,scl=23, sda=22))    # 气压传感器
+led = Signal(18,mode=Pin.OUT,value=0,invert=True) # 低电平点亮的LED
+flag = True                                       # 交替声光报警使能标志 
+timer2 = None                                     # 报警用定时器对象,也用来判断是否处于报警状态
 
-# 数组元素是标量类型-----------------------------------------------
-desc1 = {'x': 0 | UINT16,
-         'y': 2 | UINT16,
-         'arr': (4 | ARRAY, (len(data)-4) | UINT8)}
-s1 = struct(addr,desc1)
-print(hex(s1.x), hex(s1.y),s1.arr[0], s1.arr[1]) # 输出：0x100 0x302 4 5
+def timer2_cb(_):                                 # 报警用定时器中断回调
+    global led,bz,flag    
+    if flag: bz.tone(1000)                        # 声音报警,发声频率1000Hz                                            
+    else:    bz.no_tone()                         # 暂停发声        
+    led(flag)                                     # 灯光报警,交替闪灯
+    flag = not flag                               # 交替使能
 
-# 数组元素是聚合类型-----------------------------------------------
-desc2 = {'arr': (ARRAY, len(data)//2, {'x': 0 | UINT8, 'y': 1 | UINT8,})}
-s2 = struct(addr,desc2)
-for i in range(len(data)//2):
-    print(s2.arr[i].x, s2.arr[i].y)   
+def timer1_cb(_):                                 # 监测用定时器中断回调
+    global bmp,bz,led,timer2
+    t,p,_ = bmp.get_measurements()                # 在此读取传感器的测量结果
+    print(f'{t} {p}  \r',end='')                  # 在LED上显示（这里用打印模拟）
+    if t>=28:                                     # 假设温度突破28启动报警（便于测试程序）
+        if timer2 is None:                        # 若未处于报警状态,则开启报警
+            timer2=Timer(2,mode=Timer.PERIODIC,freq=4,callback=timer2_cb)  # 启动报警用定时器
+    else:
+        if timer2 is not None:                    # 若处于报警状态,关闭执行器和报警用定时器
+            led(0)
+            bz.no_tone()
+            timer2.deinit()            
+            timer2=None     
+timer1 = Timer(1,mode=Timer.PERIODIC,freq=0.5,callback=timer1_cb)  # 监测用定时器,2秒的测试间隔    
+try:
+    while True:time.sleep(1)
+except KeyboardInterrupt:
+    bz.deinit()    
+    timer1.deinit()
+    if timer2 is not None:                        # 键盘中断退出时处于报警状态
+        led(0)
+        Timer2.deinit()
 
-# 元组作为描述符的一维数组-------------------------------------------
-desc3 = (ARRAY, len(data) | UINT8)   # 2个数据项的元组作为描述符
-a1 = struct(addr,desc3)
-for i in range(len(data)):
-    print(a1[i], end=' ')
-print()
-
-# 元组作为描述符的二维数组------------------------------------------- 
-col, row = 4, len(data)//4           # 二维数组行列定义
-sub = (ARRAY, col | UINT8)           # col个标量数据项
-desc4 = (ARRAY, row, sub)            # row个聚合类型数据项
-a2  = struct(addr, desc4)
-for i in range(row):                 # 打印二维数组矩阵
-    for j in range(col):
-        print(a2[i][j],end=' ')
-    print()

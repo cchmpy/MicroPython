@@ -1,106 +1,74 @@
-import time
-from bluetooth import BLE,UUID
+from machine import Pin, Timer
+from time import sleep_us,sleep_ms
 from micropython import const
-from ble_advertising import decode_name      # 导入程序13-2.py（ble_advertising.py）
-_IRQ_SCAN_RESULT                 = const(5)   
-_IRQ_SCAN_DONE                   = const(6)
-_IRQ_PERIPHERAL_CONNECT          = const(7)
-_IRQ_PERIPHERAL_DISCONNECT       = const(8)
-_IRQ_GATTC_SERVICE_RESULT        = const(9)
-_IRQ_GATTC_SERVICE_DONE          = const(10)
-_IRQ_GATTC_CHARACTERISTIC_RESULT = const(11)
-_IRQ_GATTC_CHARACTERISTIC_DONE   = const(12)
-_IRQ_GATTC_DESCRIPTOR_RESULT     = const(13)
-_IRQ_GATTC_DESCRIPTOR_DONE       = const(14)
-class BleDiscoveServices():
-    def __init__(self,srv_name): 
-        self._srv_name = srv_name  # 待连接服务器的名字
-        self._ble = BLE();  self._ble.active(True)
-        self._ble.irq(self._irq)
-        self._conn_h   = None     # 与服务器的连接句柄
-        self._services = []         # 保存所有服务的句柄
-        self._atts = {}         # 保存所有属性的字典 handle:uuid
-        self._found = False       # 是否找到设备
-        self._done  = False        # 是否完成所有操作
-        self._ble.gap_scan(5000,500_000, 200_000, True)
+# 步进电机励磁/细分模式: 通过拨码开关状态定义
+MODE = {(0,0,0):1, (1,0,0):2, (0,1,0):4, (1,1,0):8,    # (MS1,MS2,MS3):steps
+        (0,0,1):16, (1,0,1):32, (0,1,1):32,(1,1,1):32}
+# 步进电机励磁/细分模式：通过整数常量定义
+MODE_FULL_STEP   = const(1)    # 整步，1细分
+MODE_HALF_STEP   = const(2)    # 半步，1/2细分
+MODE_QUARTER_STEP= const(4)    # 1/4细分
+MODE_1_8_STEP    = const(8)    # 1/8细分
+MODE_1_16_STEP   = const(16)   # 1/16细分
+MODE_1_32_STEP   = const(32)   # 1/32细分
+
+class DRV8825:
+    def __init__(self,pin_dir, pin_step, pin_en,mode=MODE_QUARTER_STEP,
+                 freq_full_step=500,spr_full_step=200):
+        self._pin_dir  = Pin(pin_dir,Pin.OUT,value=0)   # 转动方向控制引脚
+        self._pin_step = Pin(pin_step,Pin.OUT,value=0)  # 步数控制引脚,上升沿触发
+        self._pin_en   = Pin(pin_en,Pin.OUT,value=1)    # 使能控制引脚,低电平有效
+        self._freq_full_step = freq_full_step           # 整步模式下启动频率
+        self._spr_full_step = spr_full_step     # 整步模式下旋转一周的步数 spr(steps per revolution)
+        self.mode(mode)                         # 增加或更新成员变量：self._mode、self._delay_us
+        self.enable(False) 
     
-    def _irq(self,event, data):
-        # ----------------------------------------------------------扫描
-        if event == _IRQ_SCAN_RESULT: 
-            addr_type, addr, _, _, adv_data = data
-            if decode_name(bytes(adv_data))==self._srv_name:   # 找到设备
-                self._found = True
-                print(f'已经发现设备{self._srv_name},现在连接...')
-                self._ble.gap_connect(addr_type, addr)         # 发起连接 
-        elif event == _IRQ_SCAN_DONE: 
-            if not self._found:
-                print(f'没有发现设备{self._srv_name}。')
-                self._done = True 
-        # ----------------------------------------------------------连接 
-        elif event == _IRQ_PERIPHERAL_CONNECT:
-            conn_handle, addr_type, addr = data
-            self._conn_h = conn_handle
-            print(f'已连接到设备{self._srv_name},现在搜索服务...')
-            self._ble.gattc_discover_services(self._conn_h) 
-        elif event == _IRQ_PERIPHERAL_DISCONNECT:
-            conn_handle, _, _ = data
-            print('已断开连接。')
-            self._conn_h, self._done =None,True 
-        # ----------------------------------------------------------搜索服务
-        elif event == _IRQ_GATTC_SERVICE_RESULT: 
-            conn_handle, start_handle, end_handle, uuid = data
-            self._services.append(start_handle)
-            self._atts[start_handle]=(UUID(uuid)) 
-        elif event == _IRQ_GATTC_SERVICE_DONE: 
-            conn_handle, status = data 
-            print(f'搜索服务完成,共发现{len(self._atts)}个服务,现在搜索特性...')
-            self._ble.gattc_discover_characteristics(self._conn_h,1,0xffff)
-        # ----------------------------------------------------------搜索特性
-        elif event == _IRQ_GATTC_CHARACTERISTIC_RESULT:
-            conn_handle, end_handle, value_handle, properties, uuid = data
-            self._atts[value_handle]=[(UUID(uuid)),properties]
-        elif event == _IRQ_GATTC_CHARACTERISTIC_DONE: 
-            conn_handle, status = data
-            print('搜索特性完成,现在搜索描述符...')
-            self._ble.gattc_discover_descriptors(self._conn_h,1,0xffff)
-        # ----------------------------------------------------------搜索描述符
-        elif event == _IRQ_GATTC_DESCRIPTOR_RESULT: 
-            conn_handle, dsc_handle, uuid = data
-            if dsc_handle not in self._atts:
-                self._atts[dsc_handle]=(UUID(uuid))
-        elif event == _IRQ_GATTC_DESCRIPTOR_DONE:
-            conn_handle, status = data
-            self._print()
-            self._ble.gap_disconnect(self._conn_h)              # 断开连接
-    
-    def _print(self):
-        d = UUID(0x2803)                                        # 特性声明
-        r = sorted(self._atts.items(),key=lambda x:x[0])        # 按属性句柄排序
-        print('现在打印整体服务框架...')
-        for a in r:
-            if a[0] in self._services: print(a[0],a[1],'服务')   # 服务
-            elif a[1] == d: print('  |---',a[0],a[1],'特性声明')  # 特性声明
-            elif type(a[1])==list:                               # 特性
-                b = a[1][1]
-                print('      |---',a[0],a[1][0],end=' ')
-                if b & 1 : print('广播',end=' ')
-                if b & 2 : print('读取',end=' ')
-                if b & 4 : print('无响应写入',end=' ')
-                if b & 8 : print('写入',end=' ')
-                if b & 16 : print('通知',end=' ')
-                if b & 32 : print('指示',end=' ')
-                if b & 64 : print('签名写',end=' ')
-                if b & 128 : print('扩展',end='')
-                print('')
-            else: print('      |---',a[0],a[1]) 
-    
-    def wait_done(self):
-        while not self._done: time.sleep_ms(5)    
-    def deinit(self): self._ble.active(False)
-    
-def main():
-    ble = BleDiscoveServices('esp32_temp')
-    ble.wait_done()
-    ble.deinit()
-    
-if __name__ == '__main__':  main()
+    def _delay(self):                           # 计算当前模式和频率下，高低电平保持时间(半周期) 
+        self._delay_us = 500_000//(self._freq_full_step * self._mode)
+        
+    def mode(self, mode=None):                  # 获取或设置细分模式
+        if mode is None:
+            return self._mode
+        if isinstance(mode, int):               # mode是整数，如1
+            if mode in MODE.values(): self._mode = mode
+            else: raise ValueError('Invalid Integer')
+        elif isinstance(mode, tuple):           # mode是元组，如(1,0,0)
+            m = MODE.get(mode,None)
+            if m: self._mode = m
+            else: raise ValueError('Mode must be a tuple of 3 numbers(0 or 1)')
+        else:
+            raise ValueError('Mode must be a int or a tuple of 3 numbers(0 or 1)') 
+        self._delay()
+        
+    def freq(self,freq_full_step=None):          # 获取和设置：整步模式下的启动频率
+        if freq_full_step is None: return self._freq_full_step 
+        if freq_full_step:
+            self._freq_full_step = freq_full_step
+            self._delay() 
+        
+    def enable(self,en=True):                    # 是否允许设备工作
+        self._pin_en(not en)                     # 低电平有效
+
+    def steps(self,steps=1,cw=True, lock=False): # 按设定步数和方向转动
+        self._pin_dir(cw)                        # 设置方向控制引脚
+        self.enable(True)
+        for _ in range(steps): 
+            self._pin_step(1)                    # 上升沿触发步进
+            sleep_us(self._delay_us) 
+            self._pin_step(0)
+            sleep_us(self._delay_us)
+        self.enable(lock)                        # 是否锁定
+        
+    def angle(self,degree,cw=True, lock=False):  # 按设定角度和方向转动
+        steps = int(degree * self._spr_full_step * self._mode / 360)
+        self.steps(steps,cw,lock)
+
+if __name__=='__main__':                         # 驱动42步进电机17HS4023,模拟时钟的秒针转动
+    from machine import Timer
+    step = DRV8825(16,17,18,freq_full_step=1500,spr_full_step=200)
+    step.mode(MODE_1_16_STEP)                    # 16细分
+    timer1 = Timer(1)
+    timer1.init(period=1000, mode=Timer.PERIODIC, callback=lambda _:step.angle(6,False))
+    try:
+        while True: sleep_ms(1000)
+    except KeyboardInterrupt: timer1.deinit()

@@ -1,18 +1,29 @@
-import _thread,time
-from machine import Pin
-def blink(led:Pin,period_ms):
-    while True:
-        led.toggle()
-        time.sleep_ms(period_ms)
-red = Pin(23,mode=Pin.OUT)
-green = Pin(22,mode=Pin.OUT)
+import network,time
+# 配置STA模式（客户端，连接到现有Wi-Fi）
+def connect_wifi(ssid='ssid',key='key',timeout=30):            # timeout是超时秒数
+    sta = network.WLAN(network.STA_IF)                         # 创建STA接口对象
+    sta.active(True)
+    if not sta.isconnected():
+        print(f'连接到{ssid}...')
+        sta.connect(ssid, key)
+        while not sta.isconnected() and timeout>0:             # 如果没有连接且不超时
+            time.sleep(1); timeout -= 1 
+    if sta.isconnected(): print(f"连接成功:{sta.ifconfig()}") 
+    else: print("连接超时") 
+    return sta
 
-_thread.start_new_thread(blink,(red,500))                   # 启动线程1
-_thread.start_new_thread(blink,(green,),{'period_ms':800})  # 启动线程2
+# 配置AP模式（热点，允许其它设备连接）
+def create_ap(ssid='ESP32_AP',key='12345678',ip=None):
+    ap = network.WLAN(network.AP_IF)                           # 创建AP接口对象
+    ap.active(True)                                            # 激活AP接口
+    if ip is not None:                                         # 设置网络层接口参数
+        ap.ifconfig((ip, '255.255.255.0', ip, ip))
+    ap.config(ssid=ssid, key=key, security=network.WLAN.SEC_WPA_WPA2)
+    if ap.active(): print(f"已启用热点{ssid}:{ap.ifconfig()}")  # 检查AP接口是否激活
+    else: print("启用热点失败")
+    return ap
 
-n = 0
-while True:                  # 主线程的循环
-    if (n := n+1)>9999: n=0
-    print(f'{n:4}\r',end='') 
-    time.sleep(1)
- 
+if __name__ == '__main__':                                     # 混合接口模式
+    sta = connect_wifi(ssid='热点名称',key='密码')              # STA接口
+    ap = create_ap()                                           # AP接口
+    sta.disconnect(); ap.disconnect()                          # 断开连接

@@ -1,29 +1,238 @@
-import asyncio
-from machine import Timer 
-async def task1():
-    while True:
-        await tsf1.wait()
-        print("任务1被唤醒")
-        
-async def task2():
-    while True:
-        await tsf2.wait()
-        print("任务2被唤醒")
-        
-async def task3():
-    await asyncio.sleep(6)
-    timer.deinit()    
-    print('关闭所有任务')  
+import hashlib, asyncio, ssl, time
+from binascii import a2b_base64
+from esp32 import Partition
+from machine import reset
+from sys import exit, print_exception
+try:                                               # 导入第三方加密算法库
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec,rsa,padding    
+    VERIFY_SIG = True                              # 验证签名
+except ImportError:  VERIFY_SIG = False            # 不验证签名
+       
+class _Response:                                   # OTAClient.get()返回的对象
+    def __init__(self, reader, status, headers):
+        self.reader = reader                       # 异步读取器 
+        self.status = status                       # 响应状态码 
+        self.headers = headers                     # 保存部分响应头字段的字典
+    async def close(self):                         # 关闭客户端连接
+        self.reader.close()                        # reader和wirter是同一对象
+        await self.reader.wait_closed()
 
-async def main():
-    global timer,tsf1,tsf2
-    def cb(_):    
-        tsf1.set()
-        tsf2.set()
-    tsf1 = asyncio.ThreadSafeFlag()   # 创建tsf1
-    tsf2 = asyncio.ThreadSafeFlag()   # 创建tsf1    
-    asyncio.create_task(task1())      # 创建任务1并加入就绪队列
-    asyncio.create_task(task2())      # 创建任务2并加入就绪队列
-    timer = Timer(0,period=2000, mode=Timer.PERIODIC, callback=cb) # 启动定时器
-    await asyncio.gather(task3())     # 不gather其它任务是为了能够关闭    
-asyncio.run(main())
+class OTAClient:                                   # 客户端类，与服务器交互
+    def __init__(self, timeout=10):
+        self.timeout = timeout                     # 连接服务器超时时间（秒）
+    async def get(self, host, path, port=None, ssl=None): # 发出请求、解析响应头
+        # 1. 异步连接服务器，发出GET请求
+        if port is None: port = 443 if ssl else 80        # 定义端口
+        try:
+            reader, writer = await asyncio.wait_for(      # 连接服务器
+                    asyncio.open_connection(host, port, ssl),
+                    timeout=self.timeout)
+        except (asyncio.TimeoutError,OSError) as err:
+            print('× 连接服务器超时或失败,请检查服务器、主机、端口号和证书:',err) 
+            return None                            # 返回None,不返回_Response对象
+        # 请求头必须添加Host字段，这是Python的aiohttp的强制要求
+        request_headers = f'GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n\r\n'
+        writer.write(request_headers)              # 发送请求行和请求头
+        await writer.drain() 
+        # 2. 读取响应行、响应头，返回_Response对象
+        headers = {}                               # 保存响应头的字段
+        l = await reader.readline()                # 读取响应行HTTP/1.1 200 OK\r\n
+        status = int(l.split(None, 2)[1])          # 解析状态码
+        if status != 200:
+            print(f'× 响应状态码[{status}]异常,请检查请求路径')
+            writer.close()
+            await writer.wait_closed()
+            return None 
+        while True:                                # 读取响应头
+            l = await reader.readline()
+            if not l or l == b'\r\n': break        # 响应头结束 
+            k, v = l.split(b':', 1)  # 字段分为2部分,如Content-Type和text/html\r\n 
+            k = k.strip().lower()                  # 字段名去空白，转为小写
+            v = v.strip()                          # 字段值去空白
+            if k in b'content-length':             # 保存字段Content-Length
+                headers[k.decode()] = int(v)
+            elif k in b'firmware-signature':       # 保存字段Firmware-Signature
+                headers[k.decode()]=a2b_base64(v)  # base64字符串签名转为bytes            
+        return _Response(reader,status,headers)    # 返回_Response对象
+
+class OTAUpdate:                                   # 完成固件更新
+    @staticmethod    
+    def mark_cancel_rollback():                    # 新建或更新main.py，禁止回滚
+        def _write(f):                             # 嵌套函数，写入main.py
+            f.seek(0)                              # 定位到文件开头
+            f.write('from esp32 import Partition\n')
+            f.write('Partition.mark_app_valid_cancel_rollback()\n')
+        try:
+            with open('/main.py','r+') as f:       # 文件存在
+                data = f.read()
+                if 'Partition.mark_app_valid_cancel_rollback()' not in data:
+                    _write(f)                      # 写入禁止回滚函数
+                    f.write(data)                  # 写入main.py的原有内容
+        except OSError:                            # main.py不存在,抛出异常
+            with open('/main.py','w') as f:  _write(f)    # 新建并写入
+    
+    def __init__(self):
+        try:
+            self._ota=Partition(Partition.RUNNING).get_next_update()# 获取更新分区 
+            bs = self._ota.ioctl(5,0)              # 获取块大小:4096字节
+            self._block_size = bs if bs else 512   # 若iotcl()返回None，使用512
+            self._blocks = self._ota.ioctl(4,0)    # 分区总块数
+            self._psize=self._block_size * self._blocks          # 分区大小
+            self._buf = memoryview(bytearray(self._block_size))  # 读写缓冲
+        except OSError:                            # 非OTA分区抛出OSError
+            print('× 设备使用了非OTA固件，无法更新')
+            exit(0)                                # 退出并软重置系统
+    
+    def _erase(self):                              # 擦除OTA更新分区
+        b = self._blocks
+        ota = self._ota
+        print('  现在擦除OTA更新分区，已完成：')  
+        for i in range(b):
+            ota.ioctl(6,i)                         # 擦除第i块
+            print(f'  {(i+1)*100//b}%\r',end='')   # 打印擦除进度
+        print('\n√ 完成擦除')
+    
+    def _reset(self):                              # 设置启动分区、禁止回滚、硬重置        
+        print('√ 固件更新成功')
+        print(f'  当前运行分区：{Partition(Partition.RUNNING).info()[4]}')
+        print(f'  下次启动分区：{self._ota.info()[4]}')
+        self._ota.set_boot()                       # 设置启动分区
+        OTAUpdate.mark_cancel_rollback()           # 重启成功后，禁止回滚
+        print('  现在硬重置...')
+        reset()
+    
+    def _partition_digest(self,size):              # 获取已写入更新分区数据的摘要
+        # 参数size：写入分区的总字节数
+        buf = self._buf
+        blocks,left=divmod(size,self._block_size)  # 写入的整数块数、剩余字节数
+        sha256 = hashlib.sha256()                  # 定义hash对象
+        for i in range(blocks): 
+            self._ota.readblocks(i,buf,0)          # 整块读取
+            sha256.update(buf)
+        b = buf[:left]
+        self._ota.readblocks(blocks,b,0)           # 读取剩余
+        sha256.update(b) 
+        return sha256.digest()                     # 返回摘要
+    
+    def update_from_file(self, bin_file):          # 从文件更新
+        bs = self._block_size                      # 分区块大小（局部变量缓存实例变量）
+        buf = self._buf                            # 缓存 
+        # 1、打开文件、检查文件和分区大小、擦除分区
+        try: f = open(bin_file,'rb')
+        except OSError:
+            print(f'× 无法打开固件文件,它可能不存在')
+            return None
+        fsize = f.seek(0,2)                        # 固件文件总大小
+        f.seek(0)                                  # 定位到文件开头
+        if fsize+bs > self._psize:   # 检查分区大小是否满足固件要求(冗余一个扇区)
+            print(f'× 固件文件大小[{fsize}]接近或超过分区容量[{self._psize}]，无法更新')
+            return None
+        self._erase()                              # 擦除分区
+    
+        # 2、将固件写入ota分区
+        print('  写入固件文件...')
+        file_digest = hashlib.sha256()             # 用于计算固件文件的sha256摘要
+        block_id = 0                               # 待写入分区块编号
+        t = 0                                      # 写入分区总字节书
+        while size := f.readinto(buf):             # 读取固件
+            if size != bs: buf = buf[:size]        # 读取到文件末尾
+            self._ota.writeblocks(block_id,buf,0)  # 写入块
+            file_digest.update(buf) 
+            block_id += 1                          # 下一个块
+            t += size                              # 更新写入总字节数
+        print('√ 完成写入')
+        f.close()                                  # 关闭文件
+        
+        # 3、哈希值校验
+        if file_digest.digest() != self._partition_digest(t): # 对比文件和写入ota固件的哈希值
+            print('× 哈希值(SHA256)校验错误，更新失败')
+            return None
+        else: print('√ 哈希值(SHA256)校验正确')
+        
+        # 4、设置启动分区、禁止回归、硬重置
+        self._reset()
+        
+    async def _update(self, host, path, port, server_cert, firmware_sig_cert):
+        global VERIFY_SIG
+        # 1、定义ctx对象，用于ssl验证服务器身份
+        if server_cert:                                  # 验证服务器身份的证书文件
+            ctx=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # 创建客户端模式的SSLContext
+            ctx.load_verify_locations(cafile=server_cert)# 载入证书链数据
+            ctx.verify_mode = ssl.CERT_REQUIRED          # 验证服务器身份
+        else: ctx = None                                 # 不验证服务器身份 
+        # 2、连接服务器、请求固件文件、验证固件文件与分区大小关系、擦除分区
+        s = OTAClient(timeout=10)
+        r = await s.get(host=host, path=path, port=port, ssl=ctx) # GET请求固件
+        if r is None:  return None        
+        fsize = r.headers['content-length']              # 固件文件大小
+        bs = self._block_size                            # 闪存分区的块大小
+        if (fsize+bs) > self._psize:                     # 冗余一个块
+            print(f'× 固件文件大小[{fsize}]接近或超过分区容量[{self._psize}]，无法更新')
+            return None 
+        self._erase()                                    # 擦除分区
+        
+        # 3、分块读取并写入ota分区
+        print('  分块读取固件并写入OTA分区...')
+        file_digest = hashlib.sha256()                   # 下载固件文件的sha256对象
+        block_id = 0; t = 0                        # 待写入分区块编号/写入分区总字节
+        reader = r.reader 
+        while True:
+            remain = fsize - t                           # 固件的剩余未读取字节数
+            if remain>=bs: data = await reader.readexactly(bs) 
+            elif remain>0: data = await reader.readexactly(remain) 
+            else:  break
+            self._ota.writeblocks(block_id,data,0)       # 写入块
+            file_digest.update(data)
+            block_id += 1; t += len(data)
+            print(f'  {t*100//fsize}%\r',end='')         # 打印读取和写入进度
+        await r.close()                                  # 异步关闭客户端连接
+        print('\n√ 完成写入')
+        
+        # 4、哈希值校验或使用公钥验证签名
+        sg = r.headers.get('firmware-signature',None)    # 固件签名，可能没有
+        VERIFY_SIG = VERIFY_SIG and bool(sg) and bool(firmware_sig_cert) # 是否验签
+        if VERIFY_SIG == False:                          # 不使用公钥验签
+            if file_digest.digest() != self._partition_digest(t): 
+                print('× 哈希值(SHA256)校验错误，更新失败')
+                return None
+            print('√ 哈希值(SHA256)校验正确') 
+        else:                                            # 使用公钥验签
+            with open(firmware_sig_cert, 'rb') as f:     # 读取验证签名的服务器证书
+                ca=x509.load_der_x509_certificate(f.read())  # 载入公钥证书
+                pkey = ca.public_key()                   # 提取公钥 
+            sha256_alg = hashes.SHA256()                 # 选用的哈希算法
+            if isinstance(pkey, rsa.RSAPublicKey):       # 公钥算法RSA 
+                try:                                     # 用公钥验签
+                    pkey.verify(sg, self._partition_digest(t), 
+                                padding.PSS(mgf=padding.MGF1(sha256_alg),
+                                            salt_length=sha256_alg.digest_size),
+                                sha256_alg)
+                except:
+                    print('× 签名验证失败!(RSA)')
+                    return None
+            elif isinstance(pkey, ec.EllipticCurvePublicKey):  # 公钥算法ECDSA 
+                try:
+                    pkey.verify(sg, self._partition_digest(t), ec.ECDSA(sha256_alg)) 
+                except:
+                    print('× 签名验证失败!(ECDSA)')
+                    return None
+            print('√ 签名验证成功')
+           
+        # 5、设置启动分区、禁止回滚、硬重置
+        self._reset()
+    
+    def update_from_http(self, host, path, port=None, server_cert=None, firmware_sig_cert=None):
+        asyncio.run(self._update(host=host, path=path, port=port,
+                                 server_cert=server_cert, firmware_sig_cert=firmware_sig_cert))
+
+if __name__=='__main__':
+    import myutils
+    myutils.connect_wifi()
+    myutils.sync_ntp()
+    ota = OTAUpdate()
+    ota.update_from_http(host='mpy-ota.local', path='/ota',
+               server_cert='rootCA.der', firmware_sig_cert='mpy-ota.local.der')
+
+

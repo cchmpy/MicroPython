@@ -1,14 +1,18 @@
-from machine import lightsleep
-import esp32,time
-if hasattr(esp32,'raw_temperature'):     # ESP32
-    temperature = lambda: f'{(esp32.raw_temperature()-32)*5/9:.2f}'  # 华氏度转摄氏度
-elif hasattr(esp32, 'mcu_temperature'):  # ESP32C3/C6、ESP32S2/S3
-    temperature = esp32.mcu_temperature
-else:
-    temperature = lambda:'Unable to obtain'
-a = 0
-for i in range(100000): a += 1           # 热身
-print(temperature())                     # 打印cpu内部温度
-time.sleep_ms(50)                        # 防止打印未完就进入睡眠
-lightsleep(10_000)                       # 进入睡眠，10秒后唤醒
-print(temperature())
+import _thread,time
+from machine import Pin
+def blink(led:Pin,period_ms):
+    while True:
+        led.toggle()
+        time.sleep_ms(period_ms)
+red = Pin(23,mode=Pin.OUT)
+green = Pin(22,mode=Pin.OUT)
+
+_thread.start_new_thread(blink,(red,500))                   # 启动线程1
+_thread.start_new_thread(blink,(green,),{'period_ms':800})  # 启动线程2
+
+n = 0
+while True:                  # 主线程的循环
+    if (n := n+1)>9999: n=0
+    print(f'{n:4}\r',end='') 
+    time.sleep(1)
+ 

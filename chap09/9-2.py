@@ -1,21 +1,11 @@
-import esp32,time,machine
-# 定义复位和唤醒原因的字典
-reset={1:'PWRON_RESET',2:'HARD_RESET',3:'WDT_RESET',4:'DEEPSLEEP_RESET',5:'SOFT_RESET'}
-wake={2:'EXT0_WAKE',3:'EXT1_WAKE',4:'TIMER_WAKE',5:'TOUCHPAD_WAKE',6:'ULP_WAKE'}
-
-# 设置唤醒源,ext0不能与触摸唤醒和ULP唤醒同时使用
-machine.TouchPad(12).config(300)              # ESP32的触摸阈值设为300
-esp32.wake_on_touch(True)                     # 设置触摸传感器唤醒源
-esp32.wake_on_ulp(True)                       # 设置协处理器唤醒源
-esp32.wake_on_ext1((4,),esp32.WAKEUP_ANY_HIGH)# 设置外部唤醒源ext1
-print('Zzzz...')
-time.sleep_ms(50)                             # 等待打印完成
-# machine.deepsleep(5000)
-machine.lightsleep(5000)                      # 睡眠,同时设置定时器唤醒
-
-rs = machine.reset_cause()                    # 重置原因
-wr = machine.wake_reason()                    # 唤醒原因
-print(f'reset_cause:{reset[rs]}  wake_reason:{wake[wr]}')
-esp32.wake_on_touch(False)                    # 禁用触摸传感器唤醒源
-esp32.wake_on_ulp(False)                      # 禁用协处理器唤醒源
-esp32.wake_on_ext1(None)                      # 禁用外部唤醒源ext1
+import asyncio
+from machine import Pin
+async def blink(led:Pin,period_ms):       # 通过async def定义协程
+    while True:
+        led.toggle()
+        await asyncio.sleep_ms(period_ms) # 异步延时，await表示异步等待延时操作完成，期间让出CPU
+async def main(led1, led2):               # 定义主协程
+    asyncio.create_task(blink(led1, 800)) # 把子协程包装为任务，加入事件循环的就绪队列
+    asyncio.create_task(blink(led2, 600))
+    await asyncio.sleep_ms(10_000)        # 异步延时，期间让出CPU，事件循环可调度执行其它任务
+asyncio.run(main(Pin(23,mode=Pin.OUT), Pin(22,mode=Pin.OUT)))   # 启动事件循环，这是程序的入口

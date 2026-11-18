@@ -1,11 +1,15 @@
-import machine,esp32,time
-Pin = machine.Pin
-esp32.wake_on_ext0(36,esp32.WAKEUP_ANY_HIGH)  # 设置唤醒源,36引脚连接HC-SR501
+import asyncio
+async def foo(loop):
+    try:
+        1 / 0                                 # 触发异常
+    except ZeroDivisionError as err:
+        print('触发异常')        
+        context = {                           # 构造context字典
+            'message': 'Division by zero in example_coroutine',
+            'exception': err,
+            'future': asyncio.current_task()}        
+        loop.call_exception_handler(context)  # 手动触发事件循环的异常处理流程(使用默认处理器)
 
-reset = machine.reset_cause()                 # esp32重置原因
-if  reset == machine.PWRON_RESET:             # 系统上电
-    time.sleep(60)                            # 等待模块完成初始化
-elif reset == machine.DEEPSLEEP_RESET:        # 从Deep-sleep唤醒
-    Pin(23,mode=Pin.OUT,value=1)              # 警报触发引脚
-    time.sleep(3)                             # 警报持续3秒（实际应更长时间如30秒）
-machine.deepsleep()
+loop = asyncio.get_event_loop()
+loop.run_until_complete(foo(loop))
+loop.close()

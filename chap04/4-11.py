@@ -1,13 +1,13 @@
-# 可调用类实现计数器4-11.py
-class Counter:
-    def __init__(self):  
-        self.count = 0   # 存储状态,相当于闭包捕获的变量
-    def __call__(self):  # 定义调用时的行为,相当闭包函数
-        self.count += 1
-        return self.count
-    def reset(self):     # 重置计数
-        self.count = 0
-c = Counter()            # 类似于闭包c = counter()
-print(c())               # 1
-print(c())               # 2
-c.reset()                # 重置计数
+import deflate, json
+config = {"name": "c/c++", "type":"cppvsdbg", "request":"launch",
+          "program": "${fileDirname}\\${fileBasenameNoExtension}.exe",
+          "args": [], "stopAtEntry":0, "cwd":"${workspaceFolder}"}
+# 将字典对象序列化为json字符串，并隐含调用DeflateIO流的write()方法压缩并写入流。
+with open("config.gz", "wb") as f:    
+    with deflate.DeflateIO(f, deflate.GZIP, 6) as d:
+        json.dump(config, d)
+# 先隐含调用DeflateIO流的read()方法解压为json字符串，再将其转换为字典对象
+with open("config.gz", "rb") as f:
+    with deflate.DeflateIO(f, deflate.GZIP, 6) as d:
+        config = json.load(d)
+        print(config)             # 打印字典对象

@@ -1,116 +1,80 @@
-import json, time
-from network import WLAN
-from esp32 import NVS
-
-class WifiNvsManager:
-    def __init__(self, name_space='wifi_store', blob_key='wifi_cred', len_key='wifi_cred_len'):
-        self._nvs = NVS(name_space)                             # 创建NVS对象
-        self._blob_key = blob_key                               # 保存Wi-Fi账户的键
-        self._len_key = len_key                                 # 存储blob字节长度的键
-        self._wifi_cred = self._load()                          # 载入所有账户信息,结果是字典对象
+import uctypes,struct
+class WavFile:    
+    # WAV文件头部结构描述符
+    WAV_HEADER_DESC = {
+        "riff_id":(0 | uctypes.ARRAY, 4 | uctypes.UINT8),
+        "size":    4 | uctypes.UINT32,
+        "format": (8 | uctypes.ARRAY, 4 | uctypes.UINT8),
+        "fmt_id":       (12 | uctypes.ARRAY, 4 | uctypes.UINT8),
+        "fmt_size":      16 | uctypes.UINT32,
+        "encode":        20 | uctypes.UINT16,
+        "channels":      22 | uctypes.UINT16,
+        "sample_rate":   24 | uctypes.UINT32,
+        "bytes_per_sec": 28 | uctypes.UINT32,
+        "bytes_per_sam": 32 | uctypes.UINT16,
+        "sample_bits":   34 | uctypes.UINT16, 
+        "data_id": (36 | uctypes.ARRAY, 4 | uctypes.UINT8),
+        "data_size":40 | uctypes.UINT32 }
     
-    def _load(self):                                            # 载入所有账户数据，反序列化为字典
-        try: 
-            blob_len = self._nvs.get_i32(self._len_key)         # 先读取blob数据的字节长度
-            if blob_len <= 0: 
-                raise ValueError('Invalid blob length')
-            buf = bytearray(blob_len)                           # 定义保存blob的bytearray
-            self._nvs.get_blob(self._blob_key, buf)             # 读取blob数据
-            return json.loads(buf.decode())                     # 反序列化为字典,可能抛出ValueError 
-        except (OSError,ValueError) as err: 
-            return {'accounts': {},'last_valid': (None,None) }  # 首次读取或数据错误，返回空结构
-        
-    def _save(self, blob_data:bytes):                           # 内部方法：存储blob数据和其字节长度
-        nvs = self._nvs
-        try:                                                    # 先删原数据,避免长度不匹配或blob残留
-            nvs.erase_key(self._blob_key)
-            nvs.erase_key(self._len_key)
-        except OSError:  pass                                   # 首次存储无数据，忽略删除失败错误 
-        nvs.set_blob(self._blob_key, blob_data)                 # 存储blob数据(json序列化后的bytes)
-        nvs.set_i32(self._len_key, len(blob_data))              # 存储blob数据的字节长度
-        nvs.commit()                                            # 提交保存
-        
-    def get_last_valid(self):                                   # 返回最近有效的ssid和key 
-        return self._wifi_cred.get('last_valid',(None,None))
-    
-    def get_all(self):                                          # 返回所有账号信息
-        return self._wifi_cred.get('accounts',{})
-    
-    def save_ssid_key(self, ssid:str, key:str, last_valid=False,**kwargs): 
-        # 保存单个账户信息,kwargs是该账户额外信息(字典类型)
-        wifi_c = self._wifi_cred                                # 所有账户的字典对象        
-        key_data = wifi_c['accounts'].get(ssid,None)            # 获取ssid对应的key数据(列表）
-        if key_data:                                            # 存在同名账户
-            same_key = False                                    # 密码是否相同
-            for d in key_data:                                  # 遍历列表,其内每个元素是dict
-                if d['key'] == key:                             # 密码相同(更新账号信息) 
-                    for k,v in kwargs.items(): d[k]=v           # 更新或添加额外信息
-                    same_key = True
-                    break
-            if not same_key:                                    # 密码不同
-                new_key = {'key':key}                           # 添加密码信息
-                for k,v in kwargs.items(): new_key[k]=v         # 添加额外信息
-                key_data.append(new_key)                        # 列表增加一个字典元素                             
-        else:                              # 新账户如："C7LHU": [{"key": "1234", "rssi": -37,… }]
-            key_data = {}
-            key_data['key'] = key                               # 添加密码信息
-            for k,v in kwargs.items(): key_data[k] = v          # 添加额外信息 
-            wifi_c['accounts'][ssid] = [key_data,]              # 添加该账户完整信息
-        
-        if last_valid:                                          # 设为最近有效账号
-            wifi_c['last_valid'] =(ssid,key) 
-        self._save(json.dumps(wifi_c).encode())                 # 保存所有账户信息
-        
-    def connect_wifi(self, timeout=15):       # 使用NVS保存的ssid和key连接互联网，timeout是超时秒数        
-        def _connect(ssid,key):                                 # 嵌套函数：连接Wi-Fi
-            nonlocal sta, timeout
-            t = timeout
+    def __init__(self,wav_file, *, bufsize=12000, new=False, channels=1,sample_rate=11025,sample_bits=16):       
+        self._new = new                                    # 是否新建wav文件
+        if new:
+            self.wav = open(wav_file,'wb')                 # 新建一个wav文件                                
+            self.wav.write(struct.pack('<4sI4s4sI2H2I2H4sI',b'RIFF',0,b'WAVE',b'fmt ',
+                             16, 1, channels, sample_rate,
+                             channels*sample_rate*sample_bits//8,
+                             channels*sample_bits//8,
+                             sample_bits,b'data',0))       # 写入文件头数据
+            self.channels    = channels                    # 声道数
+            self.sample_rate = sample_rate                 # 采样率
+            self.sample_bits = sample_bits                 # 采样位数
+        else:
             try:
-                if not sta.isconnected():
-                    print(f'连接到{ssid}...')
-                    sta.connect(ssid, key)
-                    while not sta.isconnected() and t>0:        # 如果没有连接且不超时
-                        time.sleep(1);  t -= 1
-            except OSError as err: pass 
-            if not sta.isconnected(): sta.disconnect()          # 若连接失败,断开之前的连接尝试
-            return sta.isconnected()                            # 返回连接状态
+                self.wav  = open(wav_file,'rb')            # 打开现有的wav文件
+                self._parse_header()                       # 解析文件头
+                self._buf = memoryview(bytearray(bufsize)) # 读缓冲区
+            except OSError:
+                raise OSError(f'Failed to open, "{wav_file}" may not exist')
         
-        sta = WLAN(WLAN.IF_STA)                                 # 创建STA接口对象
-        sta.active(True)                                        # 开启射频模块
-        scans = [x[0].decode() for x in sta.scan()]             # 扫描当前环境的wi-fi热点,创建包含ssid的列表
+    def close(self):                                       # 关闭wav文件 
+        try: self.wav.close()
+        except: pass
+  
+    def _parse_header(self):                               # 解析wav文件头
+        header_data = self.wav.read(44)                    # 读取头部数据
+        addr = uctypes.addressof(header_data)
+        self.header = header = uctypes.struct(addr,self.WAV_HEADER_DESC,uctypes.LITTLE_ENDIAN)
+        if bytes(header.format) != b'WAVE' or header.encode!=1:      # 有效性检查
+            self.close()
+            raise ValueError("Not a WAV file or not encoded in PCM.")
+        self.channels    = header.channels
+        self.sample_rate = header.sample_rate
+        self.sample_bits = header.sample_bits
         
-        # 1. 连接最近有效热点-----------------------------
-        ssid_v, key_v = self.get_last_valid()                   # 有效热点账号 
-        if ssid_v and key_v and (ssid_v in scans):              # 当前环境有和“最近有效账号”同名的热点
-            if _connect(ssid_v, key_v):
-                print('连网成功：',sta.ifconfig())               # 打印IP地址信息
-                return sta                                      # 如果已成功连网，返回sta对象        
-        # 2. 若连接失败，则尝试连接其它热点---------------        
-        saves = self.get_all()                                  # 获取NVS保存的所有热点信息
-        if len(saves)==0 or len(scans)==0:
-            print('连网失败，nvs中没有热点信息')
-            return False                                        # 连网失败,返回False
-        for ssid in scans:                                      # 从最强信号的热点逐个尝试            
-            keys = saves.get(ssid,None)                         # 从nvs获取热点对应的keys
-            if keys: 
-                for k in keys:
-                    key = k['key']
-                    if ssid!=ssid_v and key!=key_v:             # 避免重复连接
-                        if _connect(ssid, key):
-                            print('连网成功：',sta.ifconfig())
-                            self.save_ssid_key(ssid,key,True)   # 更新最近有效热点信息
-                            return sta                          # 如果已成功连网，返回sta对象
-        print('连网失败，已尝试了nvs保存的所有热点信息')
-        return False                                            # 连网失败,返回False
-
-if __name__ == '__main__':
-    wifi_mg = WifiNvsManager()
-    print(f'{wifi_mg.get_all()}\n{wifi_mg.get_last_valid()}')   # 打印NVS保存的热点信息
-    if not (sta:=wifi_mg.connect_wifi()):                       # 如果连网失败
-        ssid, key = 'my_ssid','my_key'                          # 模拟配网操作获取的热点信息
-        wifi_mg.save_ssid_key(ssid, key, True)                  # 添加账号,并设为最近有效热点
-        sta = wifi_mg.connect_wifi()                            # 连接Wi-Fi
-        print(f'{wifi_mg.get_all()}\n{wifi_mg.get_last_valid()}')
-    if sta:                                                     # 断开连接,关闭射频 
-        sta.disconnect()
-        sta.active(False)
+    def read(self):                                        # 读取采样点数据（生成器模数）
+        if self._new: return None
+        self.wav.seek(44)
+        while size := self.wav.readinto(self._buf): 
+            if size==len(self._buf): yield self._buf
+            elif size<len(self._buf): yield self._buf[:size] 
+          
+    def write(self,data):                                  # 向新建文件内写入采样点数据data
+        self.wav.write(data) 
+    
+    def __str__(self):                                     # 打印wav文件信息        
+        return f'''Channels: {self.channels}
+Sample Rate: {self.sample_rate} Hz
+Sample Bits: {self.sample_bits}\n'''           
+            
+    def __enter__(self):                                   # 实现上下文协议，入口函数。可使用with语句
+        return self       
+    def __exit__(self,*args):                              # 实现上下文协议，出口函数。
+        self.close() 
+    
+if __name__ == '__main__':    
+    with WavFile('/sd/jys8_11k.wav') as f:
+        print(f)
+        with WavFile('/sd/jys8_11k_bk.wav',new=True, channels=f.channels,
+                     sample_rate=f.sample_rate, sample_bits=f.sample_bits) as newfile:
+            for data in f.read(): newfile.write(data)      # 读取源文件的采样点数据，并写入新文件 
+            print(newfile)

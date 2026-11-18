@@ -1,18 +1,14 @@
-import micropython as mpy, time
-from machine import Timer
-class Foo:
-    def __init__(self):
-        self._f = self.func         # 把绑定方法self.func赋值给实例变量self._f
-        self._t = Timer(0,mode=Timer.ONE_SHOT,period=500,callback=self.handle)    
-    def handle(self,_):             # 定时器中断回调函数
-        mpy.heap_lock()             # esp32x允许分配内存，但为了功能演示，故锁堆
-        ...                         # do something
-        x = 100                     # 小整数临时变量,使用栈内存
-        # mpy.schedule(self.func,x) # 若这样调用则会产生MemoryError异常
-        mpy.schedule(self._f,x)     # 在中断回调中安排一个耗时的操作
-        mpy.heap_unlock()
-    def func(self,x):               # 模拟一个耗时操作 
-        for i in range(1000):x+=1
-        print(x)
-foo = Foo()
-time.sleep(1)
+from machine import lightsleep
+import esp32, time
+if hasattr(esp32,'raw_temperature'):     # ESP32
+    temperature = lambda: f'{(esp32.raw_temperature()-32)*5/9:.2f}' # 华氏度转摄氏度
+elif hasattr(esp32, 'mcu_temperature'):  # ESP32C3/C6、ESP32S2/S3
+    temperature = esp32.mcu_temperature
+else:
+    temperature = lambda:'Unable to obtain'
+a = 0
+for i in range(100000): a += 1           # 热身，芯片内部温度略升高
+print(temperature(),'℃',sep='')         # 打印睡眠前，CPU内部温度
+time.sleep_ms(50)                        # 防止未完成打印，就进入睡眠
+lightsleep(10_000)                       # 进入睡眠，10秒后唤醒
+print(temperature(),'℃',sep='')         # 打印睡眠后，CPU内部温度

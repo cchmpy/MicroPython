@@ -1,25 +1,25 @@
-# 《MicroPython嵌入式全栈开发：ESP32硬件编程与固件定制深度实践》
+# Full-Stack Development with the MicroPython ESP32 Port
 
-#### 新书预热 即将出版
-本书以ESP32硬件平台为核心，系统讲解MicroPython从零基础入门到底层定制、固件开发、安全加密、C语言模块扩展、项目量产全流程，兼顾理论讲解、实操训练、性能优化与商业级项目落地，是一本涵盖入门、进阶、底层深度开发的一体化嵌入式实战教程。
+#### New Book Forthcoming
 
-#### 章节目录
-|标题	             	               |页数	  |字数（千字）|
-|--------------------------------------|----------|-----------|
-|第1章 为MicroPython选择开发板           |   8	  |7|
-|第2章 配置软件开发环境                  |  16	  |11|
-|第3章 自编译固件	               | 18       |14|
-|第4章 MicroPython基础        	       | 125	  |91|
-|第5章 数据结构与数据处理	               | 57	  |46|
-|第6章 系统和平台	               | 52	  |40|
-|第7章 控制片上外设	               | 94	  |75|
-|第8章 程序的优化和加速	               | 34	  |31|
-|第9章 ESP32的电源管理	             	|30	  |22|
-|第10章 并发编程和异步编程	        |22	  |16|
-|第11章 网络和物联网编程	                |123	  |127|
-|第12章 无线通信之ESP-NOW	        |28       |13|
-|第13章 低功耗蓝牙通信	                |96	  |63|
-|第14章 为外围设备编写驱动程序（一）	|73	  |51|
-|第15章 为外围设备编写驱动程序（二）	|75	  |59|
-|第16章 ESP32的安全启动和flash加密	|14       |11|
-|第17章 综合实践——视觉巡线和调控平台	|32	  |24|
+Centered on the ESP32 hardware platform, this book systematically covers the complete workflow of MicroPython development, ranging from beginner fundamentals to low-level customization, firmware building, security encryption, C module extension, and mass production. It balances theoretical explanations, hands-on practices, performance tuning, and commercial project deployment, serving as an all-in-one practical embedded development guide for beginners, intermediate learners, and deep low-level developers.
+
+#### Table of Contents
+
+| Title | Page Count |
+| --- | --- |
+| Chapter 1 Setting Up the Development Environment for MicroPython | 12 |
+| Chapter 2 Self-Built Firmware | 14 |
+| Chapter 3 The MicroPython Language | 56 |
+| Chapter 4 Data Structures and Data Processing | 30 |
+| Chapter 5 Systems and Platforms | 30 |
+| Chapter 6 Controlling On-Chip Peripherals | 53 |
+| Chapter 7 Program Optimization and Acceleration | 22 |
+| Chapter 8 ESP32 Low-Power Management | 10 |
+| Chapter 9 Concurrent and Asynchronous Programming | 15 |
+| Chapter 10 Network and IoT Programming | 64 |
+| Chapter 11 Wireless Communication with ESP-NOW | 15 |
+| Chapter 12 BLE (Bluetooth Low Energy) Communication | 42 |
+| Chapter 13 Writing Drivers for Peripheral Devices | 64 |
+| Chapter 14 ESP32 Secure Boot and Flash Encryption | 12 |
+| Chapter 15 Integrated Project: Visual Line Tracking and Control Platform | 25 |

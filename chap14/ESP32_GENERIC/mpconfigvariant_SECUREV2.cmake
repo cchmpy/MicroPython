@@ -1,0 +1,6 @@
+list(APPEND SDKCONFIG_DEFAULTS
+    boards/ESP32_GENERIC/sdkconfig.securev2
+)
+list(APPEND MICROPY_DEF_BOARD
+    MICROPY_HW_BOARD_NAME="Generic ESP32 module \(SECURE2\)"
+)

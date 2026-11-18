@@ -1,18 +1,24 @@
-import time
-def schedule_task(interval_ms):
-    last_run = time.ticks_ms()                              # 初始化上次任务执行的时间点
-    def task(current_time):                                 # 闭包函数,记住last_run和interval_ms
-        nonlocal last_run 
-        diff = time.ticks_diff(current_time,last_run)       # 计算距离上次任务执行的时间间隔
-        if diff >= interval_ms:
-            last_run = current_time
-            # 此处执行具体任务,用sleep_ms()和print()函数模拟
-            print("Task executed at", current_time)
-            time.sleep_ms(15)                                # 模拟任务执行的时间 
-            diff = time.ticks_diff(time.ticks_ms(),last_run) # 包含任务执行的时间 
-        return interval_ms-diff                              # 返回距离下次执行任务的时间
-    return task
-# 每1000ms执行一次任务
-task = schedule_task(1000)
-while True:
-    time.sleep_ms(task(time.ticks_ms()))                     # 在任务间隔睡眠，也可增加低功耗措施
+import hashlib
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes,serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+
+with open('micropython.bin','rb') as f:                                  # 计算固件文件的哈希值
+    sha256 = hashlib.sha256()
+    buf_size = 4096
+    buf = memoryview(bytearray(buf_size))                                # 读取文件缓冲
+    while (size := f.readinto(buf)):
+        if size==buf_size: sha256.update(buf)
+        else: sha256.update(buf[:size])
+    digest = sha256.digest()    
+with open('esp32-ec-key.der', 'rb') as f: 
+    private_key = serialization.load_der_private_key(f.read(),None)      # 读取私钥
+    signature = private_key.sign(digest, ec.ECDSA(hashes.SHA256()))      # 用私钥签名
+with open('esp32-ec.der', 'rb') as f:  
+    _ca = x509.load_der_x509_certificate(f.read())                       # 读取证书
+    public_key = _ca.public_key()                                        # 提取公钥
+    try:
+        public_key.verify(signature, digest, ec.ECDSA(hashes.SHA256()))  # 用公钥验签
+        print('签名验证成功(EC)!')
+    except:
+        print('签名验证失败(EC)!')  

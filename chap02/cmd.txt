@@ -17,24 +17,49 @@
 	sudo apt install build-essential gcc-mingw-w64 cmake 
 
 2.5 克隆软件包
-	cd
-	git clone https://gitee.com/EspressifSystems/esp-gitee-tools.git  
-	git clone https://gitee.com/EspressifSystems/esp-idf.git
+	
     
 	安装辅助环境和库
 	python3 --version
 	sudo apt install python3.12-venv
-	sudo apt-get install libusb-1.0
+		
+	pip --version                 # 检查版本，判断是否安装pip
+	sudo apt install python3-pip  # 安装pip
+	pip config set global.index-url http://mirrors.aliyun.com/pypi/simple  # pip换源
+	pip config set global.trusted-host mirrors.aliyun.com
+	
+	sudo apt-get install libusb-1.0  # 安装辅助库
+	
+	
+	使用jihu镜像源	
+	git config --global url.https://jihulab.com/esp-mirror/espressif.insteadOf https://github.com/espressif
+				cd
+				git clone https://gitee.com/espressifsystems/esp-gitee-tools.git  
+				cd ~/esp-gitee-tools
+				./jihu-mirror.sh set  # unset取消
+				# 以上命令用全局代理命令替换
+				cd
+	git clone -b v5.5.4 --recursive https://github.com/espressif/esp-idf.git
+	
+	# 更换版本
+	cd esp-idf
+	git checkout v5.5.4
+	git submodule update --init --recursive
+	
+				git clone https://gitee.com/EspressifSystems/esp-idf.git
 
-    切换到特定的ESP-IDF标签（版本）、更新子模块、安装ESP-IDF工具链
-	cd ~/esp-idf
-	checkout v5.5.1
-	cd ~/esp-gitee-tools
-	./submodule-update.sh ~/esp-idf/ 
-	./install.sh ~/esp-idf
+				切换到特定的ESP-IDF标签（版本）、更新子模块、安装ESP-IDF工具链
+				cd ~/esp-idf
+				git checkout v5.5.1
+				cd ~/esp-gitee-tools
+				./submodule-update.sh ~/esp-idf/ 
+				./install.sh ~/esp-idf
      
     设置环境变量
-    source ~/esp-idf/export.sh
+	cd esp-idf
+	./install.sh
+	source export.sh 
+				source ~/esp-idf/export.sh
 
 2.6 编译生成mpy-cross
 	cd ~/micropython

@@ -1,31 +1,38 @@
-from esp32 import Partition
-import esp,gc
-def partitions_info():    
-    # 打印flash和内存的大小
-    print(f'flash  size: {esp.flash_size()/1024:.3f}KiB')
-    print(f'memory size: {(gc.mem_free()+gc.mem_alloc())/1024:.3f}KiB')
-    print('-'*70)  # 打印分隔线
-    # ---------------------1. 定义分区类型、子类型信息的字典---------------
-    p_type = {0:'app',1:'data'}    
-    app_subtype = {i:f'ota_{i-0x10}' for i in range(0x10,0x20)} | \
-                  {0x00:'factory',0x20:'test'}   
-    data_subtype = {0:'ota',1:'phy',2:'nvs',4:'nvs_keys',0x81:'fat',
-                    0x82:'spiffs',0x83:'littlefs',6:'undefined'}
-    # ---------------------2. 搜索分区并获取分区信息-----------------------
-    info = []                                             # 保存分区信息的列表
-    for i in range(2):
-        for x in Partition.find(i): info.append(x.info()) # 搜索data和app分区并添加分区信息
-    # ---------------------3. 按分区地址对列表排序---------------------------
-    info.sort(key=lambda x:x[2])                          # 按偏移地址排序    
-    # ---------------------4. 打印分区表信息（表头和每个分区的信息）----------
-    print(f"{'Name':<17}{'Type':<5}{'SubType':<10}\
-{'Offset':<9}{'Size (bytes)':<20}{'Flags':<9}")
-    for x in info:
-        s = data_subtype if x[0] else app_subtype
-        print(f"{x[4]:<17}\
-{p_type.get(x[0],x[0]):<5}{s.get(x[1],x[1]):<10}\
-{hex(x[2]):<9}{hex(x[3])+' ('+str(x[3])+')':<20}\
-{'encrypted' if x[5] else '':<9}")
+from time import sleep_ms
+from machine import PWM
+import asyncio
+class Buzzer:
+    def __init__(self, pin, vol=100):
+        self._pwm = PWM(pin,freq=330,duty_u16=0) 
+        self.volume(vol)                                # 调用成员函数设置音量 
+    def deinit(self):
+        self._pwm.deinit()
+        
+    def volume(self, vol=None):                         # 获取或设置音量vol:[0,100]
+        if vol is None: return self._vol//65
+        self._vol = vol*65
+        
+    def tone(self,freq=330,duration_ms=None,vol=None):  # 按设定时长和音量播放特定频率的声音
+        if vol: self._vol = vol*65
+        self._pwm.init(freq=freq,duty_u16=self._vol) 
+        if duration_ms:
+            sleep_ms(duration_ms)
+            self.no_tone()
+            
+    async def atone(self,freq,duration_ms,vol=None):    # 异步播放设定时长、音量和频率的声音
+        if vol: self._vol = vol*65
+        self._pwm.init(freq=freq,duty_u16=self._vol) 
+        await asyncio.sleep_ms(duration_ms)
+        self.no_tone()
 
+    def no_tone(self):                                  # 停止播放
+        self._pwm.duty_u16(0)
+        
 if __name__=='__main__':
-    partitions_info()
+    tones = (0,262,294,330,349,392,440,494)                  # 音符1234567对应的频率（C调低音）
+    a  = '11556650443322105544332055443320115566504433221'   # 小星星简谱，每个音符持续500ms
+    bz = Buzzer(23,vol=20)                                   # 定义蜂鸣器对象 
+    for x in a:                                              # 播放乐谱
+        if x =='0': sleep_ms(500)
+        else:   bz.tone(tones[ord(x)-ord('0')],500,5)
+        sleep_ms(20)                                         # 每个音符播放完成后停顿20ms

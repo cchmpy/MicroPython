@@ -1,41 +1,24 @@
-from bluetooth import BLE, UUID
+from machine import Pin, time_pulse_us
+from time import sleep_us
 from micropython import const
-from ble_advertising import advertising_payload   # 导入程序13-2.py（ble_advertising.py）
-_IRQ_CENTRAL_CONNECT    = const(1)                # 中央设备（客户端）连接事件
-_IRQ_CENTRAL_DISCONNECT = const(2)                # 中央设备（客户端）断连事件
-_ENV_SENSE_UUID         = UUID(0x181A)            # 环境传感服务uuid
-_ADV_APPEARANCE         = 0x0300                  # 一般温度计外观
+# 目标为500CM时超声波常温下的传播时间（传播1cm需29.1us≈30us）
+_TIMEOUT_US = const(30000)                         # 500*2*30=30ms
+class HCSR04:
+    def __init__(self,trig,echo,timeout_us=_TIMEOUT_US,centigrade=20): 
+        self._c = 331.5+0.607*centigrade           # 当前温度对应的声速m/s
+        self._timeout_us = timeout_us
+        self._trig = Pin(trig,Pin.OUT,value=0)
+        self._echo = Pin(echo,Pin.IN) 
 
-class BleTemp():
-    def __init__(self,name='esp32_temp'):
-        self._name = name
-        self._ble  = BLE()
-        self._ble.active(True)
-        self._ble.irq(self._irq)
-        self._adv_data,self._resp_data = advertising_payload(
-            name=self._name, services=[_ENV_SENSE_UUID], appearance=_ADV_APPEARANCE,
-            manufacturer=[0xF000,'ESP32 TEMP'.encode()])       
-        
-        self._interval_us = 200_000                # 广播间隔时间 
-        self._ble.gap_advertise(self._interval_us, self._adv_data, resp_data=self._resp_data)
-        print(f'{self._name}蓝牙服务器已开启广播...')
-        
-    def _irq(self, event, data):                   # 事件处理回调函数 
-        if event == _IRQ_CENTRAL_CONNECT: 
-            print('触发事件:_IRQ_CENTRAL_CONNECT','一个中央设备与此外围设备建立连接！')
-        elif event == _IRQ_CENTRAL_DISCONNECT: 
-            print('触发事件:_IRQ_CENTRAL_DISCONNECT',f'连接已断开，{self._name}重启广播...') 
-            self._ble.gap_advertise(self._interval_us)
-            
-    def deinit(self):                              # 关闭射频模块
-        self._ble.active(False)
-
-def main():
-    import time    
-    try:
-        ble_temp = BleTemp()
-        while  True:  time.sleep(1)
-    except (KeyboardInterrupt,ValueError) as e:
-        ble_temp.deinit(); print(e)
-
-if __name__ == '__main__': main()
+    def range_cm(self):                            # 测距并返回以cm为单位的结果
+        self._trig(0); self._trig(1)
+        sleep_us(10)                               # 维持高电平至少10us
+        self._trig(0)                              # 下降沿触发测量
+        pulse_us = time_pulse_us(self._echo, 1, self._timeout_us) 
+        if pulse_us<0:  pulse_us=self._timeout_us  # 若返回-1 or -2,测量超时
+        return round(pulse_us*self._c/20000,2)
+if __name__=='__main__':
+    import time
+    h = HCSR04(trig=23,echo=22)
+    while True:
+        print(h.range_cm()); time.sleep(1)

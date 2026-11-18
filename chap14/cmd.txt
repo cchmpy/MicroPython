@@ -1,0 +1,44 @@
+14.1 安全启动
+    python -m esptool -p com11 flash-id    # 使用正确的端口号代替com11
+14.3 eFuse控制器
+    python -m espefuse -p com11 summary
+14.4 启用Secure Boot v2和Flash加密步骤
+    14.4.1 使用menuconfig设置固件构建选项
+        idf.py set-target esp32
+        idf.py menuconfig
+    14.4.4 生成签名密钥、构建固件
+        idf.py secure-generate-signing-key -v2 --scheme rsa3072 secure_boot_signing_key.pem 
+        make BOARD_VARIANT=SECUREV2
+    14.4.5 提取签名私钥的公钥、生成Flash加密密钥
+        python -m espsecure extract-public-key --version 2 --keyfile secure_boot_signing_key.pem public_key.pem
+        python -m espsecure generate-flash-encryption-key --keylen 256 flash_encryption_key.bin 
+    14.4.6 烧录eFuse
+        python -m  espefuse -c esp32 -p COM11 burn-efuse ABS_DONE_1 
+        python -m espefuse -c esp32 -p COM11 burn-key-digest public_key.pem
+        python -m espefuse -c esp32 -p COM11 burn-key flash_encryption flash_encryption_key.bin 
+    14.4.7 烧录固件
+        python -m esptool -c esp32 -p COM11 erase-flash --force
+        python -m esptool -c esp32 -p COM11 write-flash 0x1000 bootloader.bin 0xE000 partition-table.bin 0x20000 micropython.bin --force 
+        python -m esptool -c esp32 -p COM11 write-flash 0x1000 bootloader.bin 0xE000 partition-table.bin 0x17000 ota_data_initial.bin 0x20000 micropython.bin  --force
+14.6 重新烧录固件 
+    python -m espsecure encrypt-flash-data --keyfile flash_encryption_key.bin --output key_bootloader.bin --address 0x1000 bootloader.bin 
+    python -m espsecure encrypt-flash-data --keyfile flash_encryption_key.bin --output key_partition-table.bin --address 0xE000 partition-table.bin 
+    python -m espsecure encrypt-flash-data --keyfile flash_encryption_key.bin --output key_ota_data_initial.bin --address 0x17000 ota_data_initial.bin 
+    python -m espsecure encrypt-flash-data --keyfile flash_encryption_key.bin --output key_micropython.bin --address 0x20000 micropython.bin 
+    python -m esptool -c esp32 -p COM11 erase-flash –force 
+    python -m esptool -c esp32 -p COM11 write-flash 0x1000 key_bootloader.bin 0xE000 key_partition-table.bin 0x20000 key_micropython.bin --force 
+    python -m esptool -c esp32 -p COM11 write-flash 0x1000 key_bootloader.bin 0xE000 key_partition-table.bin 0x17000 key_ota_data_initial.bin 0x20000 key_micropython.bin  --force 
+    python -m esptool -c esp32 -p COM11 write-flash 0x20000 key_micropython.bin --force 
+14.7 从开发模式过渡到量产模式 
+    python -m  espefuse -c esp32 -p COM11 burn-efuse DISABLE_DL_ENCRYPT 
+    python -m  espefuse -c esp32 -p COM11 burn-efuse UART_DOWNLOAD_DIS
+
+
+
+
+
+
+
+    
+    
+    

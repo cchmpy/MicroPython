@@ -1,0 +1,406 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>ESP32视觉巡线机器人WebSocket网络调试平台</title> 
+  <style>
+    html, body { height: 100%; }
+    * {box-sizing: border-box;}
+    body { font-family: Arial, sans-serif; font-size: 14px; padding: 10px; margin: 0; color: #AEAEAE;
+           background-color:#202020;display: flex;  flex-direction: column; }    
+    
+    /* 顶部标题栏*/
+    .header {overflow: hidden;background-color: #FFA500;background-image: linear-gradient(to right,#D2691E,	#DEB887);}    
+    h2{color:#f2eeed;margin:0;text-align:center;} 
+    
+    /* 中间三列布局 */
+    .middle-container {display: flex; gap: 10px; margin-bottom: 10px; margin-top: 10px; flex: 0 0 auto;}
+    .column {background-color: #202020; padding: 10px;  border-radius: 5px; 
+             box-shadow: 2px 2px 4px 1px rgba(244, 138, 24, 0.386); padding-top:1px; padding-bottom:1px;}
+    .left-column {  flex: 2.5; }   
+    .center-column { flex: 5.7; background-color: #111;place-items: center;}
+    .right-column { flex: 1.8; display: grid; place-items: center;}/* 同时水平和垂直居中place-items: center;  */
+      
+    /*中间左侧列*/
+   
+    input[type=number], select {font-size: 18px;width: 100%;padding: 1px 2px;margin: 1px 0;
+          background-image: linear-gradient(to right,#605f5f,#b5b4b4);
+          border: 1px solid #ccc;border-radius: 4px;box-sizing: border-box;  }  
+    .input-group {margin-bottom: 10px; display: flex; }
+    .input-group label {width: 30%}
+    .input-group input {width: 50%;}
+    .input-group input[type=file] { width: 80%; }
+    .input-group button {width: 20%; }
+    .label {display: block;  color: #c9c7c7; }
+    .button {font-size: 16px;color:#00E0D1; background-color:transparent; border: none;padding: 1px 1px;}
+    .button:hover {background-color: #555555;}   
+    
+    /* 中间中部列 图像显示 */
+    #video-container {position: relative; }
+    #video-stream { display: flex; width: 400px; height: 300px; }
+    
+    /* 中间右侧列 游戏手柄布局 */
+    .gamepad { display: grid; grid-template-columns: repeat(3, 60px); grid-template-rows: repeat(4, 50px);  gap: 5px; margin: 10px 0; }
+    .gamepad-btn { width: 60px;height: 50px;font-size: 16px;color: #00E0D1;background-color: #303030;border: 2px solid #666;
+                   border-radius: 8px; cursor: pointer; display: flex;  align-items: center; justify-content: center;}
+    .gamepad-btn:hover { background-color: #555; }
+    .gamepad-btn:active { background-color: #777; border-color: #FFA500; }
+    .gamepad-btn.stop { background-color: #7b0808; }
+    .gamepad-btn.empty {  visibility: hidden; }       
+    
+    /* 底部日志区域 */
+    .bottom-container { padding: 5px; border-radius: 5px;  box-shadow: 2px 2px 4px 1px rgba(244, 138, 24, 0.386);
+                       flex: 1;  display: flex;  flex-direction: column;}
+    #log-area { width: 100%;  height:100%; color: #c0c2c2; border: 1px solid #444; outline: none; 
+      border-radius: 4px;  padding: 8px; font-family: monospace; font-size: 12px; resize: none;  
+      background-image: linear-gradient(to right, #202020, #404040);} 
+  </style>
+</head>
+<body>
+  <!-- 顶部标题栏 -->
+  <div class="header"><h2>ESP32视觉巡线机器人WebSocket网络调试平台</h2></div>
+  
+  <!-- 中间三列布局 -->
+  <div class="middle-container">
+    <!-- 左侧：参数设置 -->
+    <div class="column left-column"> 
+        <div class="input-group"> 
+          <label for="base-duty">基准功率:</label>         
+          <input type="number" id="base-duty" min="0" max="100" value="0" step="1" >
+          <button class="button" onclick="sendParam('base_duty', 'base-duty')">设置</button>
+        </div>
+
+        <div class="input-group"> 
+          <label for="accelerate">加速幅度:</label>         
+          <input type="number" id="accelerate" min="0" max="100" value="0" step="1" >
+          <button class="button" onclick="sendParam('accelerate', 'accelerate')">设置</button>
+        </div>
+        
+        <div class="input-group"> 
+          <label for="weights">ROI权重:</label>         
+          <input type="text" id="weights" title="用英文逗号隔开的ROI0-ROI5区域权重">
+          <button class="button" onclick="sendParam('weights', 'weights')">设置</button>
+        </div>
+
+        <div class="input-group"> 
+          <label for="p-value">P(PID)值:</label>         
+          <input type="number" id="p-value" min="0" max="10" value="0" step="0.01">
+          <button class="button" onclick="sendParam('p_value', 'p-value')">设置</button>
+        </div>
+        
+        <div class="input-group">  
+          <label for="threshold">灰度阈值:</label>        
+          <input type="number" id="threshold" min="0" max="255" value="0" step="1">
+          <button class="button" onclick="sendParam('threshold', 'threshold')">设置</button>
+        </div> 
+
+        <div><label for="mainPyFile">MicroPython主程序:</label></div>
+        <div class="input-group">            
+            <input type="file" id="mainPyFile"">
+            <button class="button" onclick="sendFile('main.py', 'mainPyFile')">上传</button>
+        </div>
+        
+        <div><label for="htmlFile">HTML调控主页:</label></div>
+        <div class="input-group" >            
+            <input type="file" id="htmlFile">
+            <button class="button" onclick="sendFile('index.html', 'htmlFile')">上传</button>
+        </div>
+            
+    </div>
+    
+    <!-- 中间：图像流 -->
+    <div class="column center-column">
+        <div id="video-container"> <img id="video-stream" src="" alt="ESP32 Camera Stream"> </div>        
+    </div>
+    
+    <!-- 右侧：指令控制 -->
+    <div class="column right-column">
+      <div>帧率(FPS): <span id="fps-display">0</span></div>
+       
+      <div class="gamepad">
+          <div class="gamepad-btn" onclick="sendCmd('start')">启动<br>巡线</div> 
+          <div class="gamepad-btn" onclick="sendCmd('forward')">⬆<br>W</div>
+          <div class="gamepad-btn" onclick="sendCmd('stop')">停止<br>巡线</div>
+          
+          <div class="gamepad-btn" onclick="sendCmd('left')">⬅A</div>
+          <div class="gamepad-btn stop" onclick="sendCmd('pause')">S</div>                    
+          <div class="gamepad-btn" onclick="sendCmd('right')">D➡</div>
+
+          <div class="gamepad-btn empty"></div> 
+          <div class="gamepad-btn" onclick="sendCmd('backward')">X<br>⬇</div>          
+          <div class="gamepad-btn empty"></div> 
+          
+          <div class="gamepad-btn" onclick="saveImage()">保存<br>图像</div>         
+          <div class="gamepad-btn empty"></div>
+          <div class="gamepad-btn" onclick="sendCmd('reset')">重启<br>系统</div> 
+      </div>                 
+    </div>
+  </div>
+  
+  <!-- 底部：日志区域 -->
+  <div class="bottom-container">    
+    <textarea id="log-area" readonly></textarea> 
+  </div>
+  
+  <script>
+    // WebSocket连接
+    let ws;    
+    // 帧率计算
+    let frameCount = 0, lastFpsTime = Date.now();
+    // 参数值
+    let base_duty=0, p_value=0, threshold=0, accelerate=0, weights = '';
+    // 巡线计时
+    let trackStartTime = null, trackParams = null;    
+    // 图像保存
+    let currentImageBlob = null;
+
+    // ========================= 第1部分：初始化WebSocket客户端、设置事件回调 ========================
+
+    // 页面载入时进行初始化
+    window.onload = function() {
+      initWebSocket();
+      document.addEventListener('keydown', handleKeydown);
+    };
+    
+    // 初始化WebSocket-------------------------------------------------initWebSocket()
+    function initWebSocket() {
+      if ("WebSocket" in window) {
+        ws = new WebSocket(`ws://${window.location.host}/`);
+        ws.binaryType = "arraybuffer";        
+        ws.onopen = function() {addLog("系统", "建立WebSocket连接!");};        
+        ws.onerror = function() {addLog("错误", "WebSocket连接错误");};        
+        ws.onclose = function() {addLog("系统", "服务器关闭了WebSocket连接!");};        
+        ws.onmessage = handleMessage;
+      } else {alert("浏览器不支持WebSocket!");}
+    }
+    
+    // ========================= 第2部分：处理WebSocket客户端接收到的消息 ============================
+
+    // 处理接收到的消息-------------------------------------------------handleMessage(evt) 
+    function handleMessage(evt) {
+      if (evt.data instanceof ArrayBuffer) {     // 二进制数据     
+        const arr = new Uint8Array(evt.data);
+        if (arr.length > 2 && arr[0] === 0xFF && arr[1] === 0xD8) { // 检查是否为JPEG图像（以FF D8开头）          
+          handleImageData(evt.data);// 处理图像数据
+        } else {// 尝试解析为文本数据          
+          try {
+            const text = new TextDecoder().decode(evt.data);
+            handleTextData(text);
+          } catch (e) { addLog("接收", "二进制数据 (非图像)");}
+        }
+      } else {        // 文本数据       
+        handleTextData(evt.data);
+      }
+    }
+    
+    // 处理图像数据-------------------------------------------------handleImageData(buffer)
+    function handleImageData(buffer) {      
+      frameCount++;// 更新帧率
+      const now = Date.now();
+      if (now - lastFpsTime >= 1000) {
+        document.getElementById('fps-display').textContent = frameCount;
+        frameCount = 0;
+        lastFpsTime = now;
+      }      
+      // 显示图像
+      const blob = new Blob([buffer], {type: 'image/jpeg'});
+      currentImageBlob = blob;
+      const url = URL.createObjectURL(blob);
+      const img = document.getElementById('video-stream');
+      img.onload = function() {
+        URL.revokeObjectURL(img.src); // 释放内存
+      };
+      img.src = url;
+    }
+    
+    // 处理文本数据-------------------------------------------------handleTextData(text)
+    function handleTextData(text) {
+      try {
+        const data = JSON.parse(text);         
+        // 发送文件后的反馈信息
+        if (data.hint !== undefined) {
+            addLog('服务器反馈', data.hint);
+            return;
+          }  
+        // 刚连接时的初始参数        
+        if (data.base_duty !== undefined) {
+          base_duty = data.base_duty
+          document.getElementById('base-duty').value = base_duty;
+        }
+        if (data.p_value !== undefined) {
+          p_value = data.p_value;
+          document.getElementById('p-value').value = p_value;
+        }
+        if (data.threshold !== undefined) {
+          threshold = data.threshold;
+          document.getElementById('threshold').value = threshold;
+        } 
+        if (data.accelerate !== undefined) {
+          accelerate = data.accelerate;
+          document.getElementById('accelerate').value = accelerate;
+        } 
+        if (data.weights !== undefined) {
+          weights = data.weights;
+          document.getElementById('weights').value = weights;
+        } 
+        addLog('接收', truncateText(text));
+      } catch (e) {        
+        addLog("接收", `无法识别数据${truncateText(text)}`); // 非JSON数据
+      }
+    }
+
+    // ========================= 第3部分：处理用户操作 ================================================= 
+
+    // 发送参数-------------------------------------------------sendParam(key, inputId) 
+    function sendParam(key, inputId) {
+        let value = document.getElementById(inputId).value; 
+        if(key!= 'weights') value = Number(value); 
+        text = JSON.stringify({[key]:value});      
+        ws.send(text + '\n');
+        if(key=='base_duty') base_duty=value;
+        else if(key=='p_value') p_value = value;
+        else if(key=='threshold') threshold = value;
+        else if(key=='accelerate') accelerate = value;
+        else if(key=='weights') weights = value;
+        addLog("发送参数", truncateText(text));
+    }
+
+    // 发送文件-----------------------------------------------------sendFile(fileKey, fileId)
+    // 1. 封装 FileReader 为 Promise（便于 async/await 使用）
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();        
+        reader.onload = () => resolve(reader.result);  // 读取成功
+        reader.onerror = () => reject(reader.error);   // 读取失败
+        reader.readAsText(file, 'UTF-8');              // 以文本模式读取（默认UTF-8）
+      });
+    }
+    // 2. 主函数：读取文件并通过 WebSocket 发送
+    async function sendFile(fileKey, fileId) {
+      try {
+        // --- 步骤 1: 获取文件对象 ---
+        const fileInput = document.getElementById(fileId); 
+        const file = fileInput.files[0];        
+        if (!file) {
+          addLog('提示','请选择一个文件...');
+          return;
+        }
+        // 直接获取文件原始字节大小
+        const fileByteSize = file.size;
+        // --- 步骤 2: 异步读取文件文本 ---
+        const fileContent = await readFileAsText(file);        
+        // --- 步骤 3: 通过 WebSocket 发送 ---
+        if (ws && ws.readyState === WebSocket.OPEN) { // 确保 ws 已连接
+          // 发送JSON格式的文件名、字节数，如{file: main.py, size: 11024}
+          ws.send(JSON.stringify({file:fileKey,size:fileByteSize})+'\n'); 
+          // 发送文件内容
+          ws.send(fileContent); 
+          addLog(fileKey, `文件已发送，共计${fileByteSize}字节。`);       
+        } else {          
+          addLog('提示','WebSocket未连接。'); 
+        }
+      } catch (error) {
+        addLog('错误','上传文件失败。');        
+      }
+    }
+        
+    // 发送指令-------------------------------------------------------sendCmd(command)
+    function sendCmd(command) {   
+      if(trackStartTime) {                  // 正在巡线
+        if(command !== 'stop') {
+          addLog('系统',`正在巡线,无法发送${command}指令!`);
+          return;
+        }
+      }else{                                // 没有巡线
+        if(command === 'stop') {
+          addLog('系统',`未启动巡线,无法发送${command}指令!`);
+          return;
+        }
+        if(command === 'reset'){
+          if(!confirm('确定要重置系统吗？')) return;
+        }
+      }
+      text = JSON.stringify({cmd:command});
+      ws.send(text+'\n');
+      addLog("发送指令", truncateText(text));
+
+      if (command === 'start') {
+        trackStartTime = Date.now();        
+        addLog("系统", "开始巡线。");
+      } else if (command === 'stop' && trackStartTime) {
+        const duration = Date.now() - trackStartTime;
+        const minutes = Math.floor(duration / 60000);
+        const seconds = Math.floor((duration % 60000) / 1000);
+        addLog("系统", `巡线结束 - 用时: ${minutes}分${seconds}秒, 参数: P=${p_value}, 功率=${base_duty}, 阈值=${threshold}`);
+        trackStartTime = null;
+      }
+    }     
+    
+    // 键盘控制-------------------------------------------------------handleKeydown(evt)
+    function handleKeydown(evt) {
+      switch(evt.key.toLowerCase()) {
+        case 'w':
+        case 'arrowup':
+          sendCmd('forward');
+          break;
+        case 'x':
+        case 'arrowdown':
+          sendCmd('backward');
+          break;
+        case 'a':
+        case 'arrowleft':
+          sendCmd('left');
+          break;
+        case 'd':
+        case 'arrowright':
+          sendCmd('right');
+          break;
+        case 's':
+          sendCmd('pause');
+          evt.preventDefault();
+          break;
+        case 'q':
+          sendCmd('start');
+          break;
+        case 'e':
+          sendCmd('stop');
+          break;
+      }
+    }
+
+     // 保存图像-------------------------------------------------------saveImage() 
+    function saveImage() {
+      if (currentImageBlob) {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(currentImageBlob);
+        link.download = `esp32_capture_${Date.now()}.jpg`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        addLog("系统", "图像已保存");
+      } else {
+        addLog("系统", "暂无图像可保存");
+      }
+    }
+
+    // ========================= 第4部分：更新日志信息 =================================================
+    // 添加日志-------------------------------------------------------addLog(type, message)
+    function addLog(type, message) {
+      const logArea = document.getElementById('log-area');
+      const now = new Date();
+      const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+      const logLine = `[${time}] [${type}] ${message}\n`;
+      logArea.value = logLine + logArea.value;      
+      // 限制日志长度
+      if (logArea.value.length > 10000) {
+        logArea.value = logArea.value.substring(0, 10000);
+      }
+    }
+    
+    // 截断长文本------------------------------------------------------truncateText(text, maxLen = 200)
+    function truncateText(text, maxLen = 200) {
+      if (text.length <= maxLen) return text;
+      return text.substring(0, maxLen) + '...';
+    }
+  </script>
+</body>
+</html>

@@ -1,39 +1,22 @@
-from bluetooth import UUID
-import asyncio,aioble,struct
-_SRV_ENV_UUID   = UUID(0x181A)
-_CHAR_TEMP_UUID  = UUID(0x2A6E)
-_decode = lambda data: struct.unpack("<h", data)[0] / 100  # 温度数据解码
-
-async def find_device():                    # 扫描并发现设备
-    async with aioble.scan(5000, interval_us=30000, window_us=30000, active=True) as scanner: 
-        async for result in scanner:  
-            if result.name() == 'esp32_server' and _SRV_ENV_UUID in result.services():
-                print(result.device)
-                return result.device
-    return None
-
-async def main(): 
-    device = await find_device()             # 扫描设备
-    if not device: print("未发现设备"); return
-    try:                                     # 连接设备
-        print("连接到设备:", device)
-        connection = await device.connect()
-    except asyncio.TimeoutError:
-        print("连接超时");  return    
-    async with connection:                   # 数据操作
-        try:
-            # await connection.pair()        # 可以在此发起配对
-            env_service = await connection.service(_SRV_ENV_UUID) 
-            temp_char = await env_service.characteristic(_CHAR_TEMP_UUID) 
-        except asyncio.TimeoutError:
-            print("搜索服务或特性超时") 
-        while connection.is_connected():
-            try: t = await temp_char.read()  # 读取特性值
-            except aioble.GattError as exc:               
-                if exc.errno in (261,271):   # 若特性有加密读要求（错误码为261或271）
-                    print('发起配对...')
-                    await connection.pair()  # 发起配对
-            else: print('温度:',_decode(t))   # 打印温度信息
-            await asyncio.sleep_ms(1000)
-            
-asyncio.run(main())
+import time, st77xx, gc
+from camera import Camera, PixelFormat, FrameSize
+from machine import SPI
+# 定义硬件对象
+spi = SPI(2, 40_000_000, sck=14, mosi=46, miso=3)
+lcd=st77xx.ST77xx(spi,dc=2,cs=41,rst=1,bl=42,width=1,height=1,source_forward=True, clr_inverse=False )
+lcd.rotate(90)                        # 横屏显示
+cam = Camera(frame_size=FrameSize.QVGA, pixel_format=PixelFormat.RGB565)
+start = time.time(); i = 0            # 用于计算帧率
+try:
+    while True:
+        cam.free_buffer()
+        if cam.frame_available():
+            img = cam.capture()
+            lcd.image_on_lcd(0,0,320,240,img)
+            i += 1
+        if i%1000==0: gc.collect()    # 定期垃圾回收
+except KeyboardInterrupt:             # Ctrl+C退出
+    diff = time.time()-start
+    print(i/diff)                     # 打印帧率(实测24/25fps)
+    lcd.deinit()
+    cam.deinit()

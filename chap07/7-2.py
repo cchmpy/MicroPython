@@ -1,17 +1,19 @@
-from machine import Pin,soft_reset
-import time
-s1 = Pin(22,Pin.IN,Pin.PULL_UP)         # 开关1：输入模式，内部上拉
-s2 = Pin(23,Pin.IN)                     # 开关2：输入模式，外部上拉
-
-while True:   
-    if s1()==0 and s2()==0:             # 同时按下两个按键
-        while s1()==0 or s2==0: time.sleep_ms(20)            # 延时等待按键被松开（防抖）
-        print('Press two buttons')
-        break
-    elif s1()==0:                       # 按键1被按下
-        while s1()==0: time.sleep_ms(20)
-        print('Press button1')
-    elif s2()==0:                       # 按键2被按下
-        while s2()==0: time.sleep_ms(20)
-        print('Press button2') 
-    time.sleep_ms(50)                   # 检测间隔
+import gc
+# 装饰器函数：计算函数func分配的内存和产生垃圾（以字节为单位）
+def gcit(func, *args, **kwargs): 
+    name = func.__name__ if hasattr(func,'__name__') else ''
+    def wrapper(*args, **kwargs):
+        gc.disable()
+        gc.collect()
+        a0 = gc.mem_alloc()
+        result = func(*args, **kwargs)
+        a1 = gc.mem_alloc()        
+        gc.collect()        
+        print(f'allocated:{a1-a0} garbage:{a1-gc.mem_alloc()}')
+        gc.enable()
+        return result
+    return wrapper
+@gcit               # 使用示例   
+def foo(size=1024):
+    bytearray(size) # 定义一个引用计数为0的对象
+foo(1024*10)        # 输出：allocated:10256 garbage:10256

@@ -1,100 +1,138 @@
-from machine import UART
-from network import PPP
-from sys import print_exception
-import time, socket, struct
+import ssl,binascii
+from umqtt.simple import MQTTClient, MQTTException
+from myutils import connect_wifi, sync_ntp
+from machine import unique_id
+from espnowbase import *           # 导入程序11-2.py 
 
-def connect_ppp(uart, timeout=60):                # PPP连接函数,timeout是超时秒数
-    def send_at(AT, delay=500):                   # 嵌套函数，封装发送AT指令并打印响应的操作
-        nonlocal uart
-        uart.read()                               # 清空缓存
-        uart.write(f'{AT}\r\n')                   # 发送AT指令
-        time.sleep_ms(delay)                      # 延时等待模块的响应
-        resp = uart.read()                        # 读取AT指令的响应
-        print(f'{AT} → {resp}')                  # 打印响应
-        return resp
+# MQTT Broker配置
+MQTT_CLIENT_ID = binascii.hexlify(unique_id())       # 需要转换为可打印字符
+MQTT_SERVER = 'broker-cn.emqx.io'                    # MQTT服务器IP/域名
+MQTT_PORT = 0                                        # MQTT端口
+MQTT_KEEPALIVE = 60                                  # 保活时间（秒）
+MQTT_PUB_TOPIC = b'mpy_esp32/led/status'             # 发布的主题
+MQTT_SUB_TOPIC = b'mpy_esp32/led/control'            # 订阅的主题control
+MQTT_USER = None; MQTT_PWD = None                    # 服务器认证用户名、密码
+LAST_WILL_MSG = b'{"status":"offline"}'              # 遗嘱消息
 
-    # 配置或初始化SIM800L模块
-    send_at('AT')                                 # 测试模块响应
-    send_at('ATE0')                               # 关闭回显
-    send_at('AT+CPIN?')                           # 确认SIM卡就绪
-    send_at('AT+CGDCONT=1,"IP","cmnet"')          # 配置接入点名称APN
-    send_at('AT+CGATT=1')                         # 附着网络（必须成功）
-    resp=send_at('ATD*99***1#')                   # 拨号触发PPP（2G模块核心步骤）
-   
-    ppp = PPP(uart)
-    if b'NO CARRIER' in resp:
-        print(f"拨号失败")
-    elif b'CONNECT' in resp: 
-        print("模块进入PPP模式,启动PPP连接...")
-        uart.read()                               # 清空缓存，避免干扰PPP
-        ppp.connect()
-        while not ppp.isconnected() and timeout>0:
-            time.sleep(1)
-            timeout -= 1 
-        if ppp.isconnected():                     # PPP连接成功
-            print(f'PPP连接成功！IP：{ppp.ifconfig()}') 
-        else:
-            print(f'PPP连接失败, 错误码:{ppp.status()}')
-    return ppp
-
-def dns_resolve(domain, dns_server='114.114.114.114', timeout=5):       # 通用DNS解析函数
-    # domain:要解析的域名,如www.example.org；参数timeout:超时时间（秒）
-    # ns_server: 公共DNS服务器,推荐114.114.114.114
-    try:
-        # 1. 构建标准DNS查询包（仅解析A记录，适配绝大多数场景）
-        dns_header = struct.pack('!HHHHHH', 0x1234, 0x0100, 1, 0, 0, 0) # 事务ID  
-
-        # 2. 拆分域名为DNS格式（如www.example.org → b'www\x07example\x03org\x00'）
-        domain_parts = domain.split('.')
-        dns_qname = b''
-        for part in domain_parts: dns_qname += struct.pack('B', len(part))+part.encode()
-        dns_qname += b'\x00'                                            # 域名结束符
-        
-        # 3. 查询类型（A记录=1）+查询类（IN=1）
-        dns_qtype = struct.pack('!HH', 1, 1)
-        # 4. 拼接完整DNS请求包
-        dns_request = dns_header + dns_qname + dns_qtype 
-        
-        # 5. 创建UDP Socket发送请求（SIM800L的PPP仅支持UDP 53）
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(timeout)
-        sock.sendto(dns_request, (dns_server, 53))
-        
-        # 6. 接收并解析响应
-        resp, _ = sock.recvfrom(1024)
-        sock.close()
-        
-        # 7. 从响应中提取IP（跳过头部12字节+查询段，取回答段的4字节IP）
-        if len(resp) < 28: return None                                  # 最小有效响应长度
-        ip_start = 12 + len(dns_qname) + 4 + 12                         # 定位回答段的IP位置
-        if ip_start + 4 > len(resp): return None
-        ip_bytes = resp[ip_start:ip_start+4]                            # IP字节串
-        ip = f"{ip_bytes[0]}.{ip_bytes[1]}.{ip_bytes[2]}.{ip_bytes[3]}" # 转换4字节IP为字符串
-        return ip                                                       # 返回解析后的IP字符串
-    except Exception as err:
-        print_exception(err)
-        return None
-    
-def test_connected(domain='www.example.org'):                           # 访问某个网站以检查网络连接
-    ip = dns_resolve(domain)                                            # 手动解析IP地址
-    print(ip)
-    if ip:
+class ESPNowGateway(ESPNowBase):  # ESP-NOW网关：Wi-Fi+ESP-NOW双栈，自动适配路由器跳信道    
+    _instance = None    
+    @staticmethod
+    def ssl_context(cafile):      # 用证书文件cafile定义SSLContext对象
         try:
-            s = socket.socket()                                         # 定义socket
-            s.settimeout(15)
-            s.connect((ip, 80))                                         # 连接HTTP服务器 
-            s.send(f'GET / HTTP/1.1\r\nHost: {domain}\r\nConnection: close\r\n\r\n')  # 发送HTTP请求头
-            print(s.recv(1024))                                         # 打印接收的主页数据
-            s.close() 
-        except Exception as err: 
-            print_exception(err)
-    else:
-        print('手动解析IP失败，网络连接异常')
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.load_verify_locations(cafile='broker.emqx.io-ca.cer') 
+            ctx.verify_mode = ssl.CERT_REQUIRED             
+        except Exception: ctx = None
+        return ctx
+    
+    def __new__(cls, *args, **kwargs): # 单例对象
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance 
 
+    def __init__(self, pmk=None, lmk=None, send_retries=3, lora=False):       
+        super().__init__(pmk, lmk, send_retries, lora)
+        self.node_mac = {}         # 节点名称对应的mac地址：{node_id:[mac1]}
+        self.client = None         # MQTT客户端
+    
+    def _on_mqtt_msg(self, topic, msg):  # 回调函数：处理订阅的消息        
+        msg_obj = json.loads(msg)
+        node_id = msg_obj.get('node_id') # 获取消息中的node_id
+        if node_id is None: node_id='LED'# 若消息没有node_id键，使用'LED'        
+        # 把订阅消息包装为控制消息,向所有名为node_id节点发送
+        # 消息格式：{'type': MSG_CONTROL_CMD, 'cmd':{双方约定}} 
+        for mac in self.node_mac.get(node_id,[]): # 根据node_id获取节点mac地址
+            self._send_reliable(mac, type=MSG_CONTROL_CMD, cmd=msg)
+            print(f'向 {node_id} 发出控制指令 {msg}')
+           
+    def _connect_broker(self, ssl_ctx):   # 连接MQTT Broker     
+        try:
+            self.client=MQTTClient(client_id=MQTT_CLIENT_ID, server=MQTT_SERVER,
+                                   port=MQTT_PORT, user=MQTT_USER, password=MQTT_PWD,
+                                   keepalive=MQTT_KEEPALIVE, ssl=ssl_ctx)
+            self.client.set_last_will(topic=MQTT_PUB_TOPIC, msg=LAST_WILL_MSG,
+                                      retain=True, qos=1)  # 设置遗嘱消息
+            self.client.set_callback(self._on_mqtt_msg)    # 设置订阅消息的回调函数
+            sp = self.client.connect(clean_session=True, timeout=10) # 连接服务器
+            if sp == 0: self.client.subscribe(MQTT_SUB_TOPIC, qos=1) # 订阅主题
+            return True
+        except (MQTTException, OSError) as err:
+            print_exception(err); return False
+            
+    # 网关启动入口：run
+    def run(self, wifi_ssid, wifi_psw, broker_cafile=None):  
+        self._init_device()                  # 调用基类方法，初始化硬件        
+        connect_wifi(wifi_ssid, wifi_psw); sync_ntp()
+        self.sta.config(pm=self.sta.PM_NONE) # 禁用节能模式，保证ESP-NOW接收稳定
+        print(f'Wi-Fi连接成功，当前信道: {self.sta.config("channel")}')
+        ssl_ctl = None
+        if broker_cafile is not None:
+            ssl_ctl = ESPNowGateway.ssl_context(broker_cafile)
+        if self._connect_broker(ssl_ctl):
+            print(f'连接Broker[{MQTT_SERVER}]成功')
+        else: print(f'连接Broker[{MQTT_SERVER}]失败')
+        print(f'=== 网关已启动 MAC: {self.sta.config("mac")} ===')
+        
+        while True:
+            try:
+                gc.collect()
+                time.sleep(0.2) 
+                # 1. 非阻塞检查订阅消息，触发回调_on_mqtt_msg
+                self.client.check_msg() 
+                # 2. 接收ESP-NOW消息，也可用poll轮询
+                if not self.esp_now.any(): continue
+                try: node_mac, msg = self.esp_now.irecv(50)
+                except OSError as err:
+                    print_exception(err); continue 
+                if msg is None: continue
+                # 2.1 解析JSON格式的msg
+                try:             
+                    msg_obj = json.loads(msg)
+                    msg_type = msg_obj.get('type')              # 消息类型
+                    node_id = msg_obj.get('node_id','unknown')  # 节点名称
+                except (ValueError, KeyError):
+                    print(f'来自{node_mac}]消息{msg}格式错误，已忽略')
+                    continue                 
+                # 2.2 消息分发处理
+                if msg_type == MSG_CHAN_REQ:     # 收到信道查询
+                    # 接收消息格式：{'type':MSG_CHAN_REQ, 'node_id':str, 'encrypt':bool}
+                    # 回复：{'type': MSG_CHAN_RESP, 'channel':uint}                    
+                    self._add_peer(node_mac, False)   # 必须非加密注册节点,因为对端不能添加节点
+                    chan = self.sta.config('channel')
+                    self._send_reliable(node_mac, type=MSG_CHAN_RESP, channel=chan)
+                    print(f'向 {node_id} 回复了当前网关的地址和信道')
+                    if msg_obj.get('encrypt',False):  # 是否加密，若加密修改注册信息
+                        self.esp_now.mod_peer(node_mac,lmk=self.lmk,encrypt=True)       
+                    # 保存node_id对应的mac                              
+                    nodes = self.node_mac.get(node_id,[])
+                    if len(nodes)==0:                  # 还没保存设备node_id的mac
+                        self.node_mac[node_id] = nodes # 新增键值对node_id:[]
+                    if node_mac not in nodes:          # node_mac地址不在列表内
+                        nodes.append(node_mac)                       
+                    
+                elif msg_type == MSG_SENSOR_DATA:  # 收到传感器数据
+                    # 接收消息格式：{'type': MSG_SENSOR_DATA, 'node_id':str, 'data':{双方约定}}
+                    msg_data = msg_obj.get('data')
+                    # 调用消息类型MSG_SENSOR_DATA的回调
+                    self._trigger_callback(msg_type, node_id, msg_data)
+                    # 发布主题。消息内添加设备名称键值对，例如{'node_id':str, 'status':'on'}
+                    msg_data['node_id']=node_id    
+                    self.client.publish(topic=MQTT_PUB_TOPIC,
+                                        msg=json.dumps(msg_data).encode(),
+                                        retain=True, qos=1 )
+                    print(f'发布主题{MQTT_PUB_TOPIC}消息：{msg_data}')                    
+                else:
+                    print(f'未知类型消息:', node_mac, msg_obj)                    
+            except KeyboardInterrupt: break
+        self.esp_now.active(False)
+        self.sta.active(False)
+        print('=== 网关已关闭 ===')
+        
 if __name__ == '__main__':
-    uart = UART(2, baudrate=9600, tx=22, rx=23, timeout=1000)           # 定义串口对象，波特率9600bps
-    try:
-        ppp = connect_ppp(uart)                                         # PPP连接
-        if ppp.isconnected():  test_connected()                         # 测试网络连接
-    finally:
-        ppp.disconnect()                                                # 关闭PPP连接
+    # 此处配置MQTT Broker的全局变量，如 MQTT_SERVER。这里使用默认值
+    gateway = ESPNowGateway(pmk=b'1234'*4, lmk=b'abcd'*4, lora=True)    
+    def sensor_data_cb(node_id, msg_data): # 收到传感器数据时的回调
+        print(f'收到 {node_id} 的数据：{msg_data}')      
+    gateway.register_callback(MSG_SENSOR_DATA, sensor_data_cb)
+    gateway.run(wifi_ssid='CMCC-7LhU', wifi_psw='8c8yzcb5',
+                broker_cafile='broker.emqx.io-ca.cer')
